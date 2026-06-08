@@ -170,6 +170,17 @@
       transform: translateY(1px);
     }
 
+    button:disabled {
+      background: #9aa19b;
+      cursor: not-allowed;
+      opacity: 0.85;
+    }
+
+    #useBenefitButton {
+      margin-top: 18px;
+      background: #7a4d14;
+    }
+
     .note {
       margin: 14px auto 0;
       max-width: 420px;
@@ -177,6 +188,14 @@
       font-size: clamp(14px, 3.8vw, 17px);
       line-height: 1.7;
       text-align: left;
+    }
+
+    .developer-mode-badge {
+      margin: 0 0 12px;
+      color: var(--danger-color);
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.4;
     }
 
     .debug-card h2 {
@@ -252,13 +271,13 @@
 
       <section class="status-card" aria-live="polite">
         <p class="status-label">状態</p>
-        <p id="statusMessage" class="status-message">起動中</p>
+        <p id="statusMessage" class="status-message">読み込み中です</p>
       </section>
 
       <div class="action-area">
         <button id="checkinButton" type="button">チェックインする</button>
         <p id="checkinNote" class="note">
-          LINE userId を取得できたら、Apps Script API へチェックイン保存を送信します。
+          読み込み中です。
         </p>
         <!--
           役割:
@@ -276,7 +295,8 @@
         </p>
       </div>
 
-      <section class="debug-card">
+      <section id="debugCard" class="debug-card">
+        <p id="developerModeBadge" class="developer-mode-badge" hidden>開発者モード</p>
         <h2>LIFF確認ログ</h2>
         <dl class="debug-list">
           <div class="debug-row">
@@ -342,12 +362,47 @@
       /dev URLではなく、外部公開用の /exec URLを使います。
       Apps Script側の公開設定は「実行ユーザー: 自分」「アクセスできるユーザー: 全員」が必要です。
       ここが仮文字列のままだと保存できません。
+
+      APP_MODE:
+      画面表示だけを切り替える設定です。
+      customer はお客様向け本番表示、dev は開発者向けデバッグ表示です。
+      本番運用時は customer、開発や検証時は dev にします。
+      devではデバッグカード、LIFFログ、APIログ、userId一部表示を見せます。
+      customerではデバッグカードを隠し、必要な案内だけを大きく表示します。
+
+      危険ポイント:
+      APP_MODEは画面表示だけの切り替えです。
+      サーバー側の同日重複防止、特典二重使用防止、保存処理には影響しません。
+      本当のセキュリティは Code.gs 側の検証とスプレッドシート正本の履歴で守ります。
     */
+    const APP_MODE = 'dev';
     const LIFF_ID = '2010326382-0mJkoibO';
     const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbxhwJ2sj81NR9X9X-pNOGz6cl65BNkF1JRFHgeqpnybPnM1-N1SxnsCmv20e63UbzGp/exec';
     const CHECKIN_HISTORY_KEY = 'checkinHistory';
     const STATUS_ELIGIBLE_72H = 'eligible_72h';
     const STATUS_BENEFIT_USED = 'benefit_used';
+
+    /*
+      役割:
+      customerモードで表示する、お客様向けの短い文言をまとめています。
+
+      一般化:
+      画面表示文言を定数に分けると、業務ロジックと表示文言が混ざりにくくなります。
+
+      魔改造の入口:
+      店舗の言い回しを変えたい時は、まずここを変更します。
+      devモードでは従来通り詳細ログを残し、customerモードではこの文言を優先します。
+    */
+    const CUSTOMER_MESSAGES = {
+      loading: '読み込み中です',
+      checkinAvailable: '本日ご来店のチェックインができます。',
+      firstCheckinComplete: 'チェックインが完了しました。次回、期限日までのご来店で特典対象です。',
+      benefitEligible: '特典対象です。スタッフにこの画面をお見せください。',
+      alreadyCheckedIn: '本日はすでにチェックイン済みです。',
+      benefitUsed: 'この特典は使用済みです。',
+      communicationError: '通信に失敗しました。時間をおいてもう一度お試しください。',
+      benefitNotice: 'スタッフが画面を確認した後に押してください。この操作は取り消せません。'
+    };
 
     /*
       currentCustomerCode:
@@ -370,7 +425,9 @@
     const useBenefitButton = document.getElementById('useBenefitButton');
     const checkinNote = document.getElementById('checkinNote');
     const benefitNote = document.getElementById('benefitNote');
+    const debugCard = document.getElementById('debugCard');
     const debugLog = document.getElementById('debugLog');
+    const developerModeBadge = document.getElementById('developerModeBadge');
     const locationValue = document.getElementById('locationValue');
     const isInClientValue = document.getElementById('isInClientValue');
     const isLoggedInValue = document.getElementById('isLoggedInValue');
@@ -378,6 +435,45 @@
     const lineVersionValue = document.getElementById('lineVersionValue');
     const userIdValue = document.getElementById('userIdValue');
     const storageKeyValue = document.getElementById('storageKeyValue');
+
+    /*
+      役割:
+      現在の画面モードが開発用かどうかを判定します。
+
+      一般化:
+      feature flag に近い考え方です。
+      同じコードでも、設定値によって表示するUIを切り替えます。
+    */
+    function isDevMode() {
+      return APP_MODE === 'dev';
+    }
+
+    /*
+      役割:
+      APP_MODE に応じて、お客様用UIと開発用UIの表示を切り替えます。
+
+      設計思想:
+      表示制御と保存処理を分けます。
+      debugCard を隠しても、LIFF初期化、API通信、チェックイン保存、特典使用保存は同じ処理を使います。
+
+      魔改造の入口:
+      開発者だけに見せたいUIを増やす場合は、この関数に表示切り替えを追加します。
+
+      危険ポイント:
+      customerモードでは、LINE userId の一部、APIレスポンス、payload、checkin_id などを画面に出しません。
+      devモードでは、LINE内ブラウザで通常のコンソールが見づらいため、画面内ログを診断装置として残します。
+      APP_MODE は本物の認証ではなく、表示切り替えだけです。
+    */
+    function applyAppMode() {
+      const devMode = isDevMode();
+
+      debugCard.hidden = !devMode;
+      developerModeBadge.hidden = !devMode;
+
+      if (devMode) {
+        developerModeBadge.textContent = '開発者モード';
+      }
+    }
 
     /*
       役割:
@@ -389,6 +485,29 @@
     function setStatus(message, isError) {
       statusMessage.textContent = message;
       statusMessage.classList.toggle('error', Boolean(isError));
+    }
+
+    /*
+      役割:
+      customerモードとdevモードで、画面に出す文言を切り替えます。
+
+      一般化:
+      同じ状態でも、お客様には短く分かりやすい文言、開発者には原因調査しやすい文言を出します。
+
+      魔改造の入口:
+      customerMessage を変えると店頭表示が変わります。
+      devMessage を変えると開発時の説明が変わります。
+    */
+    function setModeStatus(customerMessage, devMessage, isError) {
+      setStatus(isDevMode() ? (devMessage || customerMessage) : customerMessage, isError);
+    }
+
+    /*
+      役割:
+      補足文もモードに応じて切り替えます。
+    */
+    function setModeNote(customerMessage, devMessage) {
+      checkinNote.textContent = isDevMode() ? (devMessage || customerMessage) : customerMessage;
     }
 
     /*
@@ -633,9 +752,17 @@
           return;
         }
 
-        setStatus(response.message || '状態取得に失敗しました。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          response.message || '状態取得に失敗しました。',
+          true
+        );
       } catch (error) {
-        setStatus('状態取得に失敗しました。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          '状態取得に失敗しました。',
+          true
+        );
         appendLog('getCustomerState 失敗: ' + displayValue(error.message));
       }
     }
@@ -674,6 +801,7 @@
     */
     function renderCustomerState(state) {
       const todayCheckin = state && state.today_checkin ? state.today_checkin : null;
+      const todayStatus = todayCheckin ? todayCheckin.benefit_status : '';
       const canUseBenefit = Boolean(
         todayCheckin &&
         todayCheckin.benefit_status === STATUS_ELIGIBLE_72H &&
@@ -683,7 +811,7 @@
       useBenefitButton.hidden = true;
       useBenefitButton.disabled = false;
       benefitNote.hidden = true;
-      benefitNote.textContent = 'スタッフが画面を確認した後に押してください。この操作は取り消せません。';
+      benefitNote.textContent = CUSTOMER_MESSAGES.benefitNotice;
 
       if (!state) {
         return;
@@ -691,12 +819,53 @@
 
       if (state.can_checkin === true) {
         checkinButton.disabled = false;
-        setStatus(state.next_checkin_message || 'チェックインできます');
-        checkinNote.textContent = 'チェックインボタンを押すと、サーバー側で状態判定して保存します。';
+        setModeStatus(
+          CUSTOMER_MESSAGES.checkinAvailable,
+          state.next_checkin_message || 'チェックインできます'
+        );
+        setModeNote(
+          CUSTOMER_MESSAGES.checkinAvailable,
+          'チェックインボタンを押すと、サーバー側で状態判定して保存します。'
+        );
       } else {
         checkinButton.disabled = true;
-        setStatus('本日はすでにチェックイン済みです');
-        checkinNote.textContent = 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。';
+        if (canUseBenefit) {
+          setModeStatus(
+            CUSTOMER_MESSAGES.benefitEligible,
+            '本日はすでにチェックイン済みです。特典対象です。'
+          );
+          setModeNote(
+            CUSTOMER_MESSAGES.benefitEligible,
+            '今日のチェックインが eligible_72h のため、特典使用ボタンを表示できます。'
+          );
+        } else if (state.today_benefit_used === true) {
+          setModeStatus(
+            CUSTOMER_MESSAGES.benefitUsed,
+            'この特典は使用済みです。'
+          );
+          setModeNote(
+            CUSTOMER_MESSAGES.benefitUsed,
+            '同じ checkin_id の benefit_used が保存済みです。'
+          );
+        } else if (todayStatus === 'first_checkin') {
+          setModeStatus(
+            CUSTOMER_MESSAGES.firstCheckinComplete,
+            '本日はすでにチェックイン済みです。初回チェックインです。'
+          );
+          setModeNote(
+            CUSTOMER_MESSAGES.firstCheckinComplete,
+            '今日の benefit_status は first_checkin です。'
+          );
+        } else {
+          setModeStatus(
+            CUSTOMER_MESSAGES.alreadyCheckedIn,
+            '本日はすでにチェックイン済みです。'
+          );
+          setModeNote(
+            CUSTOMER_MESSAGES.alreadyCheckedIn,
+            'サーバー側の同日重複防止により、今日の再チェックインは保存されません。'
+          );
+        }
       }
 
       if (canUseBenefit) {
@@ -707,7 +876,7 @@
 
       if (state.today_benefit_used === true) {
         benefitNote.hidden = false;
-        benefitNote.textContent = 'この特典は使用済みです。';
+        benefitNote.textContent = CUSTOMER_MESSAGES.benefitUsed;
       }
     }
 
@@ -740,7 +909,11 @@
     */
     async function saveBenefitUsedToAppsScriptApi() {
       if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
-        setStatus('Apps Script API URLを設定してください。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          'Apps Script API URLを設定してください。',
+          true
+        );
         appendLog('特典使用中止: APPS_SCRIPT_API_URL が仮置きのままです。');
         return;
       }
@@ -760,7 +933,11 @@
       }
 
       if (currentCustomerState.today_benefit_used === true) {
-        setStatus('この特典はすでに使用済みです', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.benefitUsed,
+          'この特典はすでに使用済みです',
+          true
+        );
         await loadCustomerStateFromApi();
         return;
       }
@@ -773,7 +950,7 @@
       }
 
       useBenefitButton.disabled = true;
-      setStatus('特典使用を保存中');
+      setModeStatus(CUSTOMER_MESSAGES.loading, '特典使用を保存中');
 
       const payload = createBenefitUsedPayload(todayCheckin);
 
@@ -792,25 +969,40 @@
         appendLog('benefit_used response.message: ' + displayValue(response.message));
 
         if (response.ok === true) {
-          setStatus('この特典は使用済みです');
+          setModeStatus(
+            CUSTOMER_MESSAGES.benefitUsed,
+            'この特典は使用済みです'
+          );
           useBenefitButton.hidden = true;
           benefitNote.hidden = false;
-          benefitNote.textContent = 'この特典は使用済みです。';
+          benefitNote.textContent = CUSTOMER_MESSAGES.benefitUsed;
           await loadCustomerStateFromApi();
           return;
         }
 
         if (response.code === 'BENEFIT_ALREADY_USED') {
-          setStatus('この特典はすでに使用済みです', true);
+          setModeStatus(
+            CUSTOMER_MESSAGES.benefitUsed,
+            'この特典はすでに使用済みです',
+            true
+          );
           useBenefitButton.hidden = true;
           await loadCustomerStateFromApi();
           return;
         }
 
-        setStatus(response.message || '特典使用の保存に失敗しました。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          response.message || '特典使用の保存に失敗しました。',
+          true
+        );
         useBenefitButton.disabled = false;
       } catch (error) {
-        setStatus('特典使用の保存に失敗しました。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          '特典使用の保存に失敗しました。',
+          true
+        );
         appendLog('API benefit_used 失敗: ' + displayValue(error.message));
         useBenefitButton.disabled = false;
       }
@@ -872,7 +1064,11 @@
       error.name、error.message、error.stack を出すことで切り分けしやすくします。
     */
     function showError(error) {
-      setStatus('LIFF初期化失敗', true);
+      setModeStatus(
+        CUSTOMER_MESSAGES.communicationError,
+        'LIFF初期化失敗',
+        true
+      );
       appendLog('LIFF初期化失敗');
       appendLog('error.name: ' + displayValue(error.name));
       appendLog('error.message: ' + displayValue(error.message));
@@ -901,7 +1097,7 @@
     */
     async function initializeLiffOnlyTest() {
       try {
-        setStatus('LIFF初期化中');
+        setModeStatus(CUSTOMER_MESSAGES.loading, 'LIFF初期化中');
         appendLog('起動中');
         appendLog('location.href: ' + location.href);
         appendLog('LIFF_ID: ' + LIFF_ID);
@@ -920,12 +1116,12 @@
 
         showLiffEnvironment();
 
-        setStatus('LINEログイン確認中');
+        setModeStatus(CUSTOMER_MESSAGES.loading, 'LINEログイン確認中');
         appendLog('LINEログイン確認中');
 
         if (!liff.isLoggedIn()) {
           appendLog('未ログインのため liff.login() を呼びます。');
-          setStatus('LINEログインへ移動します');
+          setModeStatus(CUSTOMER_MESSAGES.loading, 'LINEログインへ移動します');
           liff.login();
           return;
         }
@@ -945,7 +1141,7 @@
         appendLog('profile.userId 先頭6文字: ' + maskUserId(profile.userId));
         appendLog('storage key 予定値: ' + getPlannedStorageKey());
 
-        setStatus('LINE userId 取得成功');
+        setModeStatus(CUSTOMER_MESSAGES.loading, 'LINE userId 取得成功');
         await pingAppsScriptApi();
         await loadCustomerStateFromApi();
       } catch (error) {
@@ -977,19 +1173,27 @@
     */
     async function saveCheckinToAppsScriptApi() {
       if (!currentCustomerCode) {
-        setStatus('LINE userId を取得してからチェックインしてください。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          'LINE userId を取得してからチェックインしてください。',
+          true
+        );
         appendLog('保存中止: currentCustomerCode が空です。');
         return;
       }
 
       if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
-        setStatus('Apps Script API URLを設定してください。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          'Apps Script API URLを設定してください。',
+          true
+        );
         appendLog('保存中止: APPS_SCRIPT_API_URL が仮置きのままです。');
         return;
       }
 
       checkinButton.disabled = true;
-      setStatus('保存中');
+      setModeStatus(CUSTOMER_MESSAGES.loading, '保存中');
 
       const payload = createCheckinPayload();
 
@@ -1010,23 +1214,44 @@
         appendLog('response.message: ' + displayValue(response.message));
 
         if (response.ok === true) {
-          setStatus('保存成功');
-          checkinNote.textContent = 'チェックイン保存に成功しました。';
+          setModeStatus(
+            'チェックインが完了しました。',
+            '保存成功'
+          );
+          setModeNote(
+            'チェックインが完了しました。',
+            'チェックイン保存に成功しました。'
+          );
           await loadCustomerStateFromApi();
           return;
         }
 
         if (response.code === 'ALREADY_CHECKED_IN_TODAY') {
-          setStatus('本日はすでにチェックイン済みです', true);
-          checkinNote.textContent = 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。';
+          setModeStatus(
+            CUSTOMER_MESSAGES.alreadyCheckedIn,
+            '本日はすでにチェックイン済みです',
+            true
+          );
+          setModeNote(
+            CUSTOMER_MESSAGES.alreadyCheckedIn,
+            'サーバー側の同日重複防止により、今日の再チェックインは保存されません。'
+          );
           await loadCustomerStateFromApi();
           return;
         }
 
-        setStatus(response.message || '保存に失敗しました。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          response.message || '保存に失敗しました。',
+          true
+        );
         checkinButton.disabled = false;
       } catch (error) {
-        setStatus('保存に失敗しました。', true);
+        setModeStatus(
+          CUSTOMER_MESSAGES.communicationError,
+          '保存に失敗しました。',
+          true
+        );
         appendLog('API saveCheckin 失敗: ' + displayValue(error.message));
         checkinButton.disabled = false;
       }
@@ -1035,6 +1260,12 @@
     checkinButton.addEventListener('click', saveCheckinToAppsScriptApi);
     useBenefitButton.addEventListener('click', saveBenefitUsedToAppsScriptApi);
 
+    applyAppMode();
+    setModeStatus(CUSTOMER_MESSAGES.loading, '起動中');
+    setModeNote(
+      CUSTOMER_MESSAGES.loading,
+      'LINE userId を取得できたら、Apps Script API へチェックイン保存を送信します。'
+    );
     initializeLiffOnlyTest();
   </script>
 </body>
