@@ -260,6 +260,20 @@
         <p id="checkinNote" class="note">
           LINE userId を取得できたら、Apps Script API へチェックイン保存を送信します。
         </p>
+        <!--
+          役割:
+          サーバー状態取得の結果、今日のチェックインが eligible_72h かつ未使用の場合だけ表示します。
+
+          設計思想:
+          スタッフは画面を目視確認します。
+          操作はお客様本人が行い、スタッフがお客様のスマホを触らない設計にします。
+        -->
+        <button id="useBenefitButton" type="button" hidden>
+          スタッフ確認後、特典を使用する
+        </button>
+        <p id="benefitNote" class="note" hidden>
+          スタッフが画面を確認した後に押してください。この操作は取り消せません。
+        </p>
       </div>
 
       <section class="debug-card">
@@ -332,6 +346,8 @@
     const LIFF_ID = '2010326382-0mJkoibO';
     const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbxhwJ2sj81NR9X9X-pNOGz6cl65BNkF1JRFHgeqpnybPnM1-N1SxnsCmv20e63UbzGp/exec';
     const CHECKIN_HISTORY_KEY = 'checkinHistory';
+    const STATUS_ELIGIBLE_72H = 'eligible_72h';
+    const STATUS_BENEFIT_USED = 'benefit_used';
 
     /*
       currentCustomerCode:
@@ -347,10 +363,13 @@
       本格運用では ID token または access token をサーバー側で検証します。
     */
     let currentCustomerCode = '';
+    let currentCustomerState = null;
 
     const statusMessage = document.getElementById('statusMessage');
     const checkinButton = document.getElementById('checkinButton');
+    const useBenefitButton = document.getElementById('useBenefitButton');
     const checkinNote = document.getElementById('checkinNote');
+    const benefitNote = document.getElementById('benefitNote');
     const debugLog = document.getElementById('debugLog');
     const locationValue = document.getElementById('locationValue');
     const isInClientValue = document.getElementById('isInClientValue');
@@ -519,8 +538,9 @@
       画面側の状態を、サーバー側が保存できるデータ形式へ変換する処理です。
 
       魔改造の入口:
-      今回は疎通確認なので benefit_status は first_checkin で固定します。
-      +3日判定や特典対象判定は次段階で移植します。
+      benefit_status はMVP互換のため first_checkin を一応送ります。
+      ただし action=checkin では、サーバー側が過去履歴から正しい benefit_status / memo を決めます。
+      フロントは正本判定を持ちません。
       checkin_id は将来 benefit_used と紐づけるために残します。
 
       設計思想:
@@ -571,6 +591,228 @@
         appendLog('API ping response.message: ' + displayValue(response.message));
       } catch (error) {
         appendLog('API ping 失敗: ' + displayValue(error.message));
+      }
+    }
+
+    /*
+      役割:
+      Apps Script の api=getCustomerState を呼び、スプレッドシート正本の現在状態を取得します。
+
+      設計思想:
+      localStorage は今回はまだ正本にしません。
+      同日判定、+3日特典判定、使用済み判定はスプレッドシート上のイベントログから復元します。
+      フロントは状態を受け取り、ボタン表示やメッセージ表示に使います。
+    */
+    async function loadCustomerStateFromApi() {
+      if (!currentCustomerCode) {
+        appendLog('getCustomerState 未実行: currentCustomerCode が空です。');
+        return;
+      }
+
+      if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
+        appendLog('getCustomerState 未実行: APPS_SCRIPT_API_URL を /exec URL に差し替えてください。');
+        return;
+      }
+
+      try {
+        appendLog('getCustomerState 開始');
+        const response = await jsonpRequest(APPS_SCRIPT_API_URL, {
+          api: 'getCustomerState',
+          payload: JSON.stringify({
+            customer_code: currentCustomerCode
+          })
+        }, 10000);
+
+        appendLog('getCustomerState response.ok: ' + displayValue(response.ok));
+        appendLog('getCustomerState response.message: ' + displayValue(response.message));
+
+        if (response.ok === true) {
+          currentCustomerState = response.state;
+          logCustomerState(currentCustomerState);
+          renderCustomerState(currentCustomerState);
+          return;
+        }
+
+        setStatus(response.message || '状態取得に失敗しました。', true);
+      } catch (error) {
+        setStatus('状態取得に失敗しました。', true);
+        appendLog('getCustomerState 失敗: ' + displayValue(error.message));
+      }
+    }
+
+    /*
+      役割:
+      サーバーから返った状態をデバッグログに出します。
+
+      危険ポイント:
+      LINE userId は全文表示せず、画面上ではマスクします。
+    */
+    function logCustomerState(state) {
+      if (!state) {
+        appendLog('state: null');
+        return;
+      }
+
+      appendLog('state.customer_code: ' + maskUserId(state.customer_code));
+      appendLog('state.can_checkin: ' + displayValue(state.can_checkin));
+      appendLog('state.next_checkin_status: ' + displayValue(state.next_checkin_status));
+      appendLog('state.today_benefit_used: ' + displayValue(state.today_benefit_used));
+
+      if (state.today_checkin) {
+        appendLog('today_checkin.checkin_id: ' + displayValue(state.today_checkin.checkin_id));
+        appendLog('today_checkin.benefit_status: ' + displayValue(state.today_checkin.benefit_status));
+      }
+    }
+
+    /*
+      役割:
+      サーバー状態に応じて、チェックインボタンと特典使用ボタンの表示を更新します。
+
+      一般化:
+      これは表示制御です。
+      特典対象か、同日チェックイン済みか、使用済みかという正本判定はサーバー側が返した state を使います。
+    */
+    function renderCustomerState(state) {
+      const todayCheckin = state && state.today_checkin ? state.today_checkin : null;
+      const canUseBenefit = Boolean(
+        todayCheckin &&
+        todayCheckin.benefit_status === STATUS_ELIGIBLE_72H &&
+        state.today_benefit_used === false
+      );
+
+      useBenefitButton.hidden = true;
+      useBenefitButton.disabled = false;
+      benefitNote.hidden = true;
+      benefitNote.textContent = 'スタッフが画面を確認した後に押してください。この操作は取り消せません。';
+
+      if (!state) {
+        return;
+      }
+
+      if (state.can_checkin === true) {
+        checkinButton.disabled = false;
+        setStatus(state.next_checkin_message || 'チェックインできます');
+        checkinNote.textContent = 'チェックインボタンを押すと、サーバー側で状態判定して保存します。';
+      } else {
+        checkinButton.disabled = true;
+        setStatus('本日はすでにチェックイン済みです');
+        checkinNote.textContent = 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。';
+      }
+
+      if (canUseBenefit) {
+        useBenefitButton.hidden = false;
+        benefitNote.hidden = false;
+        return;
+      }
+
+      if (state.today_benefit_used === true) {
+        benefitNote.hidden = false;
+        benefitNote.textContent = 'この特典は使用済みです。';
+      }
+    }
+
+    /*
+      役割:
+      特典使用済みイベントとして Apps Script API へ保存するpayloadを作ります。
+
+      設計思想:
+      checkin行を更新せず、benefit_used行を別イベントとして追記します。
+      同じ checkin_id を入れることで、どのチェックインに対する特典使用かを追跡できます。
+    */
+    function createBenefitUsedPayload(todayCheckin) {
+      return {
+        customer_code: currentCustomerCode,
+        action: 'benefit_used',
+        benefit_status: STATUS_BENEFIT_USED,
+        used_at: new Date().toISOString(),
+        memo: 'お客様操作により特典使用済み。スタッフ目視確認済み。',
+        checkin_id: todayCheckin.checkin_id
+      };
+    }
+
+    /*
+      役割:
+      特典使用ボタンを押した時に、benefit_used イベントを保存します。
+
+      危険ポイント:
+      操作は取り消せないため、window.confirm で確認します。
+      特典二重使用防止の正本はサーバー側の assertBenefitNotAlreadyUsed_ です。
+    */
+    async function saveBenefitUsedToAppsScriptApi() {
+      if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
+        setStatus('Apps Script API URLを設定してください。', true);
+        appendLog('特典使用中止: APPS_SCRIPT_API_URL が仮置きのままです。');
+        return;
+      }
+
+      const todayCheckin = currentCustomerState && currentCustomerState.today_checkin
+        ? currentCustomerState.today_checkin
+        : null;
+
+      if (!todayCheckin) {
+        appendLog('特典使用中止: 今日のチェックインがありません。');
+        return;
+      }
+
+      if (todayCheckin.benefit_status !== STATUS_ELIGIBLE_72H) {
+        appendLog('特典使用中止: eligible_72h ではありません。');
+        return;
+      }
+
+      if (currentCustomerState.today_benefit_used === true) {
+        setStatus('この特典はすでに使用済みです', true);
+        await loadCustomerStateFromApi();
+        return;
+      }
+
+      const confirmed = window.confirm('スタッフ確認はお済みですか？この特典を使用済みにします。一度使用すると元に戻せません。');
+
+      if (!confirmed) {
+        appendLog('特典使用キャンセル');
+        return;
+      }
+
+      useBenefitButton.disabled = true;
+      setStatus('特典使用を保存中');
+
+      const payload = createBenefitUsedPayload(todayCheckin);
+
+      appendLog('API benefit_used 開始');
+      appendLog('payload customer_code: ' + maskUserId(payload.customer_code));
+      appendLog('payload checkin_id: ' + payload.checkin_id);
+
+      try {
+        const response = await jsonpRequest(APPS_SCRIPT_API_URL, {
+          api: 'saveCheckin',
+          payload: JSON.stringify(payload)
+        }, 10000);
+
+        appendLog('benefit_used response.ok: ' + displayValue(response.ok));
+        appendLog('benefit_used response.code: ' + displayValue(response.code));
+        appendLog('benefit_used response.message: ' + displayValue(response.message));
+
+        if (response.ok === true) {
+          setStatus('この特典は使用済みです');
+          useBenefitButton.hidden = true;
+          benefitNote.hidden = false;
+          benefitNote.textContent = 'この特典は使用済みです。';
+          await loadCustomerStateFromApi();
+          return;
+        }
+
+        if (response.code === 'BENEFIT_ALREADY_USED') {
+          setStatus('この特典はすでに使用済みです', true);
+          useBenefitButton.hidden = true;
+          await loadCustomerStateFromApi();
+          return;
+        }
+
+        setStatus(response.message || '特典使用の保存に失敗しました。', true);
+        useBenefitButton.disabled = false;
+      } catch (error) {
+        setStatus('特典使用の保存に失敗しました。', true);
+        appendLog('API benefit_used 失敗: ' + displayValue(error.message));
+        useBenefitButton.disabled = false;
       }
     }
 
@@ -654,6 +896,8 @@
       危険ポイント:
       ここでは保存処理をしません。
       保存は、チェックインボタンを押した時に saveCheckinToAppsScriptApi が担当します。
+      v0.2では、LINE userId 取得後に getCustomerState API を呼びます。
+      これにより、画面側の思い込みではなく、スプレッドシート正本の状態でボタン表示を決めます。
     */
     async function initializeLiffOnlyTest() {
       try {
@@ -702,7 +946,8 @@
         appendLog('storage key 予定値: ' + getPlannedStorageKey());
 
         setStatus('LINE userId 取得成功');
-        pingAppsScriptApi();
+        await pingAppsScriptApi();
+        await loadCustomerStateFromApi();
       } catch (error) {
         showError(error);
       }
@@ -719,8 +964,8 @@
       JSONPで送信し、response.ok に応じて画面表示を変えます。
 
       魔改造の入口:
-      今回は疎通確認なので benefit_status は first_checkin 固定です。
-      +3日判定やlocalStorage保存は次段階でここに統合します。
+      v0.2では、チェックイン保存後に getCustomerState を再取得します。
+      サーバー側が benefit_status を決めるため、フロントは保存後に状態を読み直します。
       後で、保存成功時のlocalStorage更新、特典ボタン表示、+3日判定をここに統合していきます。
 
       危険ポイント:
@@ -767,12 +1012,14 @@
         if (response.ok === true) {
           setStatus('保存成功');
           checkinNote.textContent = 'チェックイン保存に成功しました。';
+          await loadCustomerStateFromApi();
           return;
         }
 
         if (response.code === 'ALREADY_CHECKED_IN_TODAY') {
           setStatus('本日はすでにチェックイン済みです', true);
           checkinNote.textContent = 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。';
+          await loadCustomerStateFromApi();
           return;
         }
 
@@ -786,6 +1033,7 @@
     }
 
     checkinButton.addEventListener('click', saveCheckinToAppsScriptApi);
+    useBenefitButton.addEventListener('click', saveBenefitUsedToAppsScriptApi);
 
     initializeLiffOnlyTest();
   </script>
