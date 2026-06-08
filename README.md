@@ -71,13 +71,29 @@ v0.2では、localStorageを正本にせず、スプレッドシート上のイ�
 
 設計思想として、フロントエンドは表示と操作を担当し、業務ルールの正本は Apps Script 側に寄せています。
 
+## v0.3 で追加したこと
+
+v0.3では、`APP_MODE` を追加し、本番用UIと開発用UIを切り替えられるようにしました。
+
+- `APP_MODE = 'customer'` では、お客様向け本番表示になります
+- `APP_MODE = 'dev'` では、LIFFログ、APIログ、state確認用のデバッグカードを表示します
+- customerモードでは、userId、APIレスポンス、payload、checkin_id などの開発情報を画面に出しません
+- devモードでは、LINE内ブラウザで原因調査しやすいように従来通り画面内ログを確認できます
+- 保存、状態取得、+3日判定、特典使用保存のロジック自体は v0.2 から変えていません
+
+本番では `customer` を使います。
+開発や検証では `dev` に切り替えます。
+
+`APP_MODE` は画面表示だけの切り替えです。
+サーバー側の同日重複防止、特典二重使用防止、保存処理には影響しません。
+
 ## まだできないこと
 
 - localStorageによる画面補助
-- 本番用のデバッグUI非表示化
 - LINE ID token または access token のサーバー側検証
 - 本番用プライバシー説明
 - 店舗ID、キャンペーンID、特典種別の保存
+- デザイン最終調整
 - JSONP以外のより安全なAPI方式への移行
 
 ## 設定する場所
@@ -105,11 +121,13 @@ GitHub Pages から呼べるように、Apps Script Webアプリのデプロイ�
 
 画面では次の状態を確認します。
 
-- `liff.init 成功`
-- `LINE userId 取得成功`
-- `storage key 予定値` が `checkinHistory:U` で始まる
-- `API ping response.ok: true`
-- `getCustomerState response.ok: true`
+- devモードでは `liff.init 成功`
+- devモードでは `LINE userId 取得成功`
+- devモードでは `storage key 予定値` が `checkinHistory:U` で始まる
+- devモードでは `API ping response.ok: true`
+- devモードでは `getCustomerState response.ok: true`
+- customerモードではデバッグカードが表示されない
+- customerモードではuserIdやAPIログが画面に出ない
 - チェックイン後に `保存成功` と表示される
 
 スプレッドシートでは、`customer_code` に `U` で始まる LINE userId が入っていれば成功です。
@@ -136,28 +154,32 @@ localStorageを消しても、スプレッドシートに今日の `checkin` 行
 - `benefit_type` を追加して特典種別を保存する
 - ID token検証を `Code.gs` に追加する
 - JSONPから別API方式へ移行する
-- デバッグUIを customer 向け画面から隠す
+- customerモードの文言とレイアウトをさらに店頭向けに整える
 
 ## テスト手順
 
-1. `current/app-script/Code.gs` を Apps Script へ反映する
-2. Apps Script を新バージョンでデプロイする
-3. WebアプリURL `/exec` を確認する
-4. `current/github-pages/index.html` の `APPS_SCRIPT_API_URL` が最新の `/exec` URL か確認する
-5. GitHubへcommitする
-6. GitHub Pagesの反映を待つ
-7. LINE Developers の LIFF エンドポイントURLは GitHub Pages URL のままにする
-8. LINEで `https://liff.line.me/2010326382-0mJkoibO` を開く
-9. LINE userId 取得成功を確認する
-10. API ping成功をログで確認する
-11. getCustomerState成功をログで確認する
-12. まだ今日未チェックインなら、チェックインボタンを押す
-13. スプレッドシートに `customer_code = U` で始まる行が増えるか確認する
-14. 保存後に getCustomerState が再取得されるか確認する
-15. 特典対象の場合、特典使用ボタンが表示されるか確認する
-16. 特典使用ボタンを押し、`benefit_used` 行が増えるか確認する
-17. 同じ `checkin_id` の再使用が `BENEFIT_ALREADY_USED` で止まるか確認する
-18. 同日に再度チェックインしようとすると `ALREADY_CHECKED_IN_TODAY` になるか確認する
+### devモード確認
+
+1. `current/github-pages/index.html` の `APP_MODE` を `dev` にする
+2. GitHubへcommitする
+3. GitHub Pagesの反映を待つ
+4. LINEで `https://liff.line.me/2010326382-0mJkoibO` を開く
+5. デバッグカードが表示されるか確認する
+6. `liff.init`、API ping、getCustomerState のログが見えるか確認する
+7. チェックインと特典使用が従来通り動くか確認する
+
+### customerモード確認
+
+1. `current/github-pages/index.html` の `APP_MODE` を `customer` に戻す
+2. GitHubへcommitする
+3. GitHub Pagesの反映を待つ
+4. LINEで `https://liff.line.me/2010326382-0mJkoibO` を開く
+5. デバッグカードが非表示になっているか確認する
+6. userIdやAPIログが画面に出ないことを確認する
+7. チェックインと特典使用が従来通り動くか確認する
+8. お客様向け文言だけが表示されることを確認する
+
+成功条件は、devでは開発ログが見え、customerでは開発ログが見えず、どちらのモードでも保存、状態取得、特典使用が壊れていないことです。
 
 ## 失敗時に見る場所
 
