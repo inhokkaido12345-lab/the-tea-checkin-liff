@@ -15,12 +15,11 @@
   liff.init() が完了しないことがあります。
 
   今回確認すること:
-  このファイルでは、スプレッドシート保存はまだ行いません。
-  まず LIFF が初期化できるか、LINE userId を取得できるかだけを確認します。
+  LIFF が初期化できること、LINE userId を取得できること、
+  その userId を使って Apps Script JSONP API へチェックイン保存できることを確認します。
 
   魔改造の入口:
-  次の段階では、ここで取得した LINE userId を customer_code として、
-  Apps Script の保存APIへ送信します。
+  次の段階では、+3日判定、特典使用、localStorage本格移植をこの外部フロントへ移します。
 
   危険ポイント:
   LIFF公式では、liff.init() は LIFF エンドポイントURLと同じURL、
@@ -241,7 +240,7 @@
       <div class="action-area">
         <button id="checkinButton" type="button">チェックインする</button>
         <p id="checkinNote" class="note">
-          現在はLIFF userId確認のみです。保存処理は次の段階でApps Script APIへ接続します。
+          LINE userId を取得できたら、Apps Script API へチェックイン保存を送信します。
         </p>
       </div>
 
@@ -293,9 +292,10 @@
 
       魔改造の入口:
       LIFFアプリを作り直した場合は LIFF_ID を差し替えます。
-      保存APIへ接続する次段階では、Apps Script WebアプリのAPI URLもここへ追加する予定です。
+      APPS_SCRIPT_API_URL は、Apps Script Webアプリの /exec URL に差し替えます。
     */
     const LIFF_ID = '2010326382-0mJkoibO';
+    const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbxhwJ2sj81NR9X9X-pNOGz6cl65BNkF1JRFHgeqpnybPnM1-N1SxnsCmv20e63UbzGp/exec';
     const CHECKIN_HISTORY_KEY = 'checkinHistory';
 
     /*
@@ -388,6 +388,11 @@
 
       今回の確認:
       storage key が checkinHistory:U で始まれば、LINE userIdを使う準備ができています。
+
+      危険ポイント:
+      現在は確認画面なので storage key もマスク表示しています。
+      本当にlocalStorageへ保存する次段階では、フルの currentCustomerCode を使う必要があります。
+      マスク済みIDを保存キー本体に使うと、別ユーザーと衝突するリスクがあります。
     */
     function getPlannedStorageKey() {
       if (!currentCustomerCode) {
@@ -395,6 +400,109 @@
       }
 
       return CHECKIN_HISTORY_KEY + ':' + maskUserId(currentCustomerCode);
+    }
+
+    /*
+      役割:
+      JSONP方式で外部APIを呼びます。
+
+      一般化:
+      JSONPは script タグを一時的に差し込んで外部APIを呼ぶ方式です。
+      fetch POST と違いCORSを避けられますが、呼び先を信用する必要があります。
+
+      魔改造の入口:
+      timeoutMilliseconds を変えると、API応答を待つ秒数を変更できます。
+
+      危険ポイント:
+      callback名は Apps Script 側でも検証します。
+      JSONPはMVPの疎通確認用です。
+      本格運用では、より安全なAPI方式も検討します。
+    */
+    function jsonpRequest(url, params, timeoutMilliseconds) {
+      return new Promise(function (resolve, reject) {
+        const callbackName = 'jsonpCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+        const script = document.createElement('script');
+        const timeoutId = setTimeout(function () {
+          cleanup();
+          reject(new Error('JSONPリクエストがタイムアウトしました。'));
+        }, timeoutMilliseconds || 10000);
+
+        function cleanup() {
+          clearTimeout(timeoutId);
+          delete window[callbackName];
+
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        window[callbackName] = function (response) {
+          cleanup();
+          resolve(response);
+        };
+
+        const query = new URLSearchParams(Object.assign({}, params, {
+          callback: callbackName
+        }));
+
+        script.src = url + '?' + query.toString();
+        script.onerror = function () {
+          cleanup();
+          reject(new Error('JSONP script の読み込みに失敗しました。'));
+        };
+
+        document.body.appendChild(script);
+      });
+    }
+
+    /*
+      役割:
+      Apps Script APIへ送るチェックイン保存用データを作ります。
+
+      一般化:
+      画面側の状態を、サーバー側が保存できるデータ形式へ変換する処理です。
+
+      魔改造の入口:
+      今回は疎通確認なので benefit_status は first_checkin で固定します。
+      +3日判定や特典対象判定は次段階で移植します。
+      checkin_id は将来 benefit_used と紐づけるために残します。
+    */
+    function createCheckinPayload() {
+      const now = new Date();
+      const checkinId = 'checkin_' + now.getTime();
+
+      return {
+        customer_code: currentCustomerCode,
+        action: 'checkin',
+        benefit_status: 'first_checkin',
+        used_at: '',
+        memo: 'GitHub Pages LIFFフロントからのチェックイン保存テスト。',
+        checkin_id: checkinId
+      };
+    }
+
+    /*
+      役割:
+      Apps Script JSONP API の疎通確認をします。
+
+      なぜ必要か:
+      保存処理で失敗した時に、LIFFの問題なのか、API URLの問題なのかを切り分けやすくします。
+      UIは増やしすぎず、結果はログにだけ出します。
+    */
+    async function pingAppsScriptApi() {
+      if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
+        appendLog('API ping 未実行: APPS_SCRIPT_API_URL を /exec URL に差し替えてください。');
+        return;
+      }
+
+      try {
+        appendLog('API ping 開始');
+        const response = await jsonpRequest(APPS_SCRIPT_API_URL, { api: 'ping' }, 10000);
+        appendLog('API ping response.ok: ' + displayValue(response.ok));
+        appendLog('API ping response.message: ' + displayValue(response.message));
+      } catch (error) {
+        appendLog('API ping 失敗: ' + displayValue(error.message));
+      }
     }
 
     /*
@@ -465,7 +573,7 @@
 
     /*
       役割:
-      LIFF初期化と LINE userId 取得だけを行います。
+      LIFF初期化と LINE userId 取得を行います。
 
       流れ:
       1. liff.init() を実行する
@@ -476,7 +584,7 @@
 
       危険ポイント:
       ここでは保存処理をしません。
-      保存処理は次段階で Apps Script API に接続して作ります。
+      保存は、チェックインボタンを押した時に saveCheckinToAppsScriptApi が担当します。
     */
     async function initializeLiffOnlyTest() {
       try {
@@ -525,6 +633,7 @@
         appendLog('storage key 予定値: ' + getPlannedStorageKey());
 
         setStatus('LINE userId 取得成功');
+        pingAppsScriptApi();
       } catch (error) {
         showError(error);
       }
@@ -532,19 +641,75 @@
 
     /*
       役割:
-      今はチェックイン保存をしないことを明示します。
+      チェックインボタンを押した時に、Apps Script JSONP APIへ保存します。
 
-      なぜ必要か:
-      この段階では userId 取得だけを確認します。
-      保存API接続を混ぜると、LIFF問題と保存API問題の切り分けが難しくなります。
+      一般化:
+      画面側で作ったpayloadを、外部APIへ送信する処理です。
+
+      魔改造の入口:
+      今回は疎通確認なので benefit_status は first_checkin 固定です。
+      +3日判定やlocalStorage保存は次段階でここに統合します。
+
+      危険ポイント:
+      画面側から送る customer_code は、本格運用ではサーバー側検証が必要です。
+      今回はLIFF userId取得済みの状態から、保存APIへ届くかだけを確認します。
     */
-    function showNextStepMessage() {
-      const message = '次の段階でApps Script APIへ保存します。現在はLIFF userId確認のみです。';
-      checkinNote.textContent = message;
-      alert(message);
+    async function saveCheckinToAppsScriptApi() {
+      if (!currentCustomerCode) {
+        setStatus('LINE userId を取得してからチェックインしてください。', true);
+        appendLog('保存中止: currentCustomerCode が空です。');
+        return;
+      }
+
+      if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
+        setStatus('Apps Script API URLを設定してください。', true);
+        appendLog('保存中止: APPS_SCRIPT_API_URL が仮置きのままです。');
+        return;
+      }
+
+      checkinButton.disabled = true;
+      setStatus('保存中');
+
+      const payload = createCheckinPayload();
+
+      appendLog('API saveCheckin 開始');
+      appendLog('payload customer_code: ' + maskUserId(payload.customer_code));
+      appendLog('payload action: ' + payload.action);
+      appendLog('payload benefit_status: ' + payload.benefit_status);
+      appendLog('payload checkin_id: ' + payload.checkin_id);
+
+      try {
+        const response = await jsonpRequest(APPS_SCRIPT_API_URL, {
+          api: 'saveCheckin',
+          payload: JSON.stringify(payload)
+        }, 10000);
+
+        appendLog('response.ok: ' + displayValue(response.ok));
+        appendLog('response.code: ' + displayValue(response.code));
+        appendLog('response.message: ' + displayValue(response.message));
+
+        if (response.ok === true) {
+          setStatus('保存成功');
+          checkinNote.textContent = 'チェックイン保存に成功しました。';
+          return;
+        }
+
+        if (response.code === 'ALREADY_CHECKED_IN_TODAY') {
+          setStatus('本日はすでにチェックイン済みです', true);
+          checkinNote.textContent = 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。';
+          return;
+        }
+
+        setStatus(response.message || '保存に失敗しました。', true);
+        checkinButton.disabled = false;
+      } catch (error) {
+        setStatus('保存に失敗しました。', true);
+        appendLog('API saveCheckin 失敗: ' + displayValue(error.message));
+        checkinButton.disabled = false;
+      }
     }
 
-    checkinButton.addEventListener('click', showNextStepMessage);
+    checkinButton.addEventListener('click', saveCheckinToAppsScriptApi);
 
     initializeLiffOnlyTest();
   </script>
