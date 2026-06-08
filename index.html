@@ -202,6 +202,44 @@
       text-align: left;
     }
 
+    .privacy-notice {
+      max-width: 420px;
+      margin: 18px auto 0;
+      color: var(--muted-color);
+      font-size: clamp(12px, 3.4vw, 15px);
+      line-height: 1.7;
+      text-align: left;
+    }
+
+    .text-button {
+      width: auto;
+      min-height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--main-color);
+      font-size: inherit;
+      font-weight: 700;
+      line-height: inherit;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .text-button:disabled {
+      background: transparent;
+      color: var(--muted-color);
+      cursor: not-allowed;
+      opacity: 0.85;
+    }
+
+    #privacyDetail {
+      margin-top: 10px;
+    }
+
+    #privacyDetail p {
+      margin: 0 0 8px;
+    }
+
     .developer-mode-badge {
       margin: 0 0 12px;
       color: var(--danger-color);
@@ -291,6 +329,37 @@
         <p id="checkinNote" class="note">
           読み込み中です。
         </p>
+        <!--
+          役割:
+          お客様向けに、保存する情報と利用目的を簡潔に説明します。
+
+          設計思想:
+          これは正式なプライバシーポリシーではなく、MVP用の最低限の店頭説明です。
+          customerモードでもdevモードでも表示します。
+          デバッグ情報ではなく、お客様に見せるべき利用目的の説明だからです。
+
+          魔改造の入口:
+          本番運用前には、正式なプライバシーポリシーへのリンク、
+          店頭掲示、問い合わせ窓口、削除対応の説明を追加します。
+        -->
+        <section id="privacyNotice" class="privacy-notice">
+          <button id="privacyToggleButton" type="button" class="text-button">
+            保存される情報について
+          </button>
+
+          <div id="privacyDetail" hidden>
+            <p>
+              このチェックインでは、特典判定と二重使用防止のため、
+              LINE上の識別子、チェックイン日時、特典使用状況を保存します。
+            </p>
+            <p>
+              保存した情報は、来店チェックイン、再来店特典の判定、特典の使用済み確認のために利用します。
+            </p>
+            <p>
+              チェックインボタンまたは特典使用ボタンを押すことで、上記の範囲での利用に同意したものとして扱います。
+            </p>
+          </div>
+        </section>
         <!--
           役割:
           サーバー状態取得の結果、今日のチェックインが eligible_72h かつ未使用の場合だけ表示します。
@@ -437,6 +506,8 @@
     const useBenefitButton = document.getElementById('useBenefitButton');
     const checkinNote = document.getElementById('checkinNote');
     const benefitNote = document.getElementById('benefitNote');
+    const privacyToggleButton = document.getElementById('privacyToggleButton');
+    const privacyDetail = document.getElementById('privacyDetail');
     const debugCard = document.getElementById('debugCard');
     const debugLog = document.getElementById('debugLog');
     const developerModeBadge = document.getElementById('developerModeBadge');
@@ -524,6 +595,26 @@
     */
     function setModeNote(customerMessage, devMessage) {
       checkinNote.textContent = isDevMode() ? (devMessage || customerMessage) : customerMessage;
+    }
+
+    /*
+      役割:
+      「保存される情報について」の説明を開閉します。
+
+      一般化:
+      詳細説明を必要な時だけ開けるトグルUIです。
+      画面を圧迫せず、必要な説明へアクセスできるようにします。
+
+      魔改造の入口:
+      後で正式なプライバシーポリシーへのリンクを足す場合は、この説明エリアに追加できます。
+
+      危険ポイント:
+      この説明はデバッグ情報ではなく、お客様向け説明です。
+      customerモードでもdevモードでも表示します。
+      MVP段階では画面内の簡易説明として扱い、本番では正式な同意導線や店頭掲示を整備します。
+    */
+    function togglePrivacyDetail() {
+      privacyDetail.hidden = !privacyDetail.hidden;
     }
 
     /*
@@ -922,6 +1013,9 @@
       危険ポイント:
       操作は取り消せないため、window.confirm で確認します。
       特典二重使用防止の正本はサーバー側の assertBenefitNotAlreadyUsed_ です。
+      特典使用ボタン押下は、画面に表示した利用目的の範囲で、
+      特典を使用済みとして記録する操作です。
+      本格運用では、別途プライバシーポリシー、店頭掲示、同意導線を整備します。
     */
     async function saveBenefitUsedToAppsScriptApi() {
       if (APPS_SCRIPT_API_URL === 'APPS_SCRIPT_API_URL') {
@@ -1183,6 +1277,9 @@
       危険ポイント:
       画面側から送る customer_code は、本格運用ではサーバー側検証が必要です。
       今回はLIFF userId取得済みの状態から、保存APIへ届くかだけを確認します。
+      チェックインボタン押下は、画面に表示した利用目的の範囲で、
+      LINE上の識別子、チェックイン日時、特典判定に必要な情報を保存する操作です。
+      本格運用では、別途プライバシーポリシー、店頭掲示、同意導線を整備します。
       ALREADY_CHECKED_IN_TODAY は業務上の正常ブロックであり、通信エラーではありません。
       その他のエラーでは再試行できるようにボタンを戻します。
       成功時や同日チェックイン済み時は、同じ操作を押し直せない状態にする思想です。
@@ -1275,6 +1372,7 @@
 
     checkinButton.addEventListener('click', saveCheckinToAppsScriptApi);
     useBenefitButton.addEventListener('click', saveBenefitUsedToAppsScriptApi);
+    privacyToggleButton.addEventListener('click', togglePrivacyDetail);
 
     applyAppMode();
     setModeStatus(CUSTOMER_MESSAGES.loading, '起動中');
