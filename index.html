@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<!--
+  ==================================================
+  外部LIFFフロントエンド確認用 index.html
+  ==================================================
+
+  役割:
+  この frontend/index.html は、GitHub Pages、Vercel、Firebase Hosting などに置く
+  外部LIFFフロントエンドです。
+
+  なぜ作るか:
+  Google Apps Script のHTML画面では、実際の実行URLが
+  script.googleusercontent.com/userCodeAppPanel になる場合があります。
+  その結果、LINE Developers に登録した LIFF エンドポイントURLと一致せず、
+  liff.init() が完了しないことがあります。
+
+  今回確認すること:
+  このファイルでは、スプレッドシート保存はまだ行いません。
+  まず LIFF が初期化できるか、LINE userId を取得できるかだけを確認します。
+
+  魔改造の入口:
+  次の段階では、ここで取得した LINE userId を customer_code として、
+  Apps Script の保存APIへ送信します。
+
+  危険ポイント:
+  LIFF公式では、liff.init() は LIFF エンドポイントURLと同じURL、
+  またはその配下のURLで実行する必要があります。
+  GitHub Pages などで公開したURLを、LINE Developers の LIFF エンドポイントURLに設定してください。
+-->
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>The TEA チェックイン</title>
+
+  <!--
+    役割:
+    LIFF SDKを読み込むための外部scriptです。
+
+    一般化:
+    LINEアプリ内ブラウザで liff.init() や liff.getProfile() を使うための部品です。
+
+    魔改造の入口:
+    LIFFを使う画面では、このscriptを読み込んだ後に liff.init() を実行します。
+  -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    /*
+      役割:
+      スマホのLINE内ブラウザで読みやすく、押しやすい見た目にします。
+
+      魔改造の入口:
+      店舗カラーを変えたい場合は、主に --main-color と --background-color を変更します。
+    */
+    :root {
+      --background-color: #f6f3ee;
+      --main-color: #2f7d5c;
+      --text-color: #222222;
+      --muted-color: #666666;
+      --danger-color: #b3261e;
+      --card-color: #ffffff;
+      --border-color: #ded6ca;
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--background-color);
+      color: var(--text-color);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .page {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 100vh;
+      padding: 28px 16px 40px;
+    }
+
+    .app {
+      width: 100%;
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 24px 0 20px;
+      color: var(--main-color);
+      font-size: clamp(30px, 8vw, 42px);
+      line-height: 1.25;
+      letter-spacing: 0;
+      text-align: center;
+    }
+
+    .status-card,
+    .debug-card {
+      box-sizing: border-box;
+      width: 100%;
+      margin-top: 18px;
+      padding: 18px;
+      background: var(--card-color);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+    }
+
+    .status-label {
+      margin: 0 0 8px;
+      color: var(--muted-color);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .status-message {
+      margin: 0;
+      color: var(--main-color);
+      font-size: clamp(22px, 6vw, 30px);
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .status-message.error {
+      color: var(--danger-color);
+    }
+
+    .action-area {
+      margin-top: 22px;
+      text-align: center;
+    }
+
+    button {
+      width: min(88vw, 420px);
+      min-height: 64px;
+      padding: 18px 24px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--main-color);
+      color: #ffffff;
+      font-size: clamp(20px, 5.5vw, 26px);
+      font-weight: 800;
+      line-height: 1.3;
+      cursor: pointer;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .note {
+      margin: 14px auto 0;
+      max-width: 420px;
+      color: var(--muted-color);
+      font-size: clamp(14px, 3.8vw, 17px);
+      line-height: 1.7;
+      text-align: left;
+    }
+
+    .debug-card h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      line-height: 1.4;
+    }
+
+    .debug-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+    }
+
+    .debug-row {
+      display: grid;
+      gap: 4px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #eee7dd;
+    }
+
+    .debug-row:last-child {
+      padding-bottom: 0;
+      border-bottom: 0;
+    }
+
+    .debug-key {
+      color: var(--muted-color);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .debug-value {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .log {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 120px;
+      margin-top: 12px;
+      padding: 12px;
+      overflow-wrap: anywhere;
+      background: #1f2a24;
+      color: #f4fff8;
+      border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 480px) {
+      .page {
+        padding: 24px 14px 36px;
+      }
+
+      .status-card,
+      .debug-card {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="app">
+      <h1>The TEA チェックイン</h1>
+
+      <section class="status-card" aria-live="polite">
+        <p class="status-label">状態</p>
+        <p id="statusMessage" class="status-message">起動中</p>
+      </section>
+
+      <div class="action-area">
+        <button id="checkinButton" type="button">チェックインする</button>
+        <p id="checkinNote" class="note">
+          現在はLIFF userId確認のみです。保存処理は次の段階でApps Script APIへ接続します。
+        </p>
+      </div>
+
+      <section class="debug-card">
+        <h2>LIFF確認ログ</h2>
+        <dl class="debug-list">
+          <div class="debug-row">
+            <dt class="debug-key">location.href</dt>
+            <dd id="locationValue" class="debug-value">確認中</dd>
+          </div>
+          <div class="debug-row">
+            <dt class="debug-key">liff.isInClient()</dt>
+            <dd id="isInClientValue" class="debug-value">未確認</dd>
+          </div>
+          <div class="debug-row">
+            <dt class="debug-key">liff.isLoggedIn()</dt>
+            <dd id="isLoggedInValue" class="debug-value">未確認</dd>
+          </div>
+          <div class="debug-row">
+            <dt class="debug-key">liff.getOS()</dt>
+            <dd id="osValue" class="debug-value">未確認</dd>
+          </div>
+          <div class="debug-row">
+            <dt class="debug-key">liff.getLineVersion()</dt>
+            <dd id="lineVersionValue" class="debug-value">未確認</dd>
+          </div>
+          <div class="debug-row">
+            <dt class="debug-key">profile.userId 先頭6文字</dt>
+            <dd id="userIdValue" class="debug-value">未取得</dd>
+          </div>
+          <div class="debug-row">
+            <dt class="debug-key">storage key 予定値</dt>
+            <dd id="storageKeyValue" class="debug-value">未取得</dd>
+          </div>
+        </dl>
+        <pre id="debugLog" class="log">ログ準備中</pre>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    /*
+      ==================================================
+      設定エリア
+      ==================================================
+
+      役割:
+      後から変更する可能性が高い値を、画面上部に集めています。
+
+      魔改造の入口:
+      LIFFアプリを作り直した場合は LIFF_ID を差し替えます。
+      保存APIへ接続する次段階では、Apps Script WebアプリのAPI URLもここへ追加する予定です。
+    */
+    const LIFF_ID = '2010326382-0mJkoibO';
+    const CHECKIN_HISTORY_KEY = 'checkinHistory';
+
+    /*
+      currentCustomerCode:
+      実際に保存へ使う予定のお客様IDです。
+      今回は liff.getProfile() で取得した LINE userId を入れます。
+
+      危険ポイント:
+      今回は簡易確認なので、画面側で取得した userId をそのまま使います。
+      本格運用では ID token または access token をサーバー側で検証します。
+    */
+    let currentCustomerCode = '';
+
+    const statusMessage = document.getElementById('statusMessage');
+    const checkinButton = document.getElementById('checkinButton');
+    const checkinNote = document.getElementById('checkinNote');
+    const debugLog = document.getElementById('debugLog');
+    const locationValue = document.getElementById('locationValue');
+    const isInClientValue = document.getElementById('isInClientValue');
+    const isLoggedInValue = document.getElementById('isLoggedInValue');
+    const osValue = document.getElementById('osValue');
+    const lineVersionValue = document.getElementById('lineVersionValue');
+    const userIdValue = document.getElementById('userIdValue');
+    const storageKeyValue = document.getElementById('storageKeyValue');
+
+    /*
+      役割:
+      画面上の状態メッセージを更新します。
+
+      一般化:
+      アプリが今どの段階にいるかをユーザーに返す「状態表示」です。
+    */
+    function setStatus(message, isError) {
+      statusMessage.textContent = message;
+      statusMessage.classList.toggle('error', Boolean(isError));
+    }
+
+    /*
+      役割:
+      デバッグログを追記します。
+
+      なぜ必要か:
+      LIFF初期化は複数の段階があるため、どこで止まったかを後から追えるようにします。
+    */
+    function appendLog(message) {
+      const currentText = debugLog.textContent === 'ログ準備中' ? '' : debugLog.textContent;
+      debugLog.textContent = currentText ? currentText + '\n' + message : message;
+    }
+
+    /*
+      役割:
+      表示用の値を安全に文字へ変換します。
+
+      魔改造の入口:
+      表示したくない値が増えた場合は、ここでマスク処理を追加できます。
+    */
+    function displayValue(value) {
+      if (value === undefined) {
+        return 'undefined';
+      }
+
+      if (value === null) {
+        return 'null';
+      }
+
+      return String(value);
+    }
+
+    /*
+      役割:
+      LINE userIdを画面表示用に短くします。
+
+      なぜ必要か:
+      userIdは個人識別子に近い情報なので、確認画面では先頭6文字だけ表示します。
+    */
+    function maskUserId(userId) {
+      if (!userId) {
+        return '未取得';
+      }
+
+      return userId.slice(0, 6);
+    }
+
+    /*
+      役割:
+      将来 localStorage に保存する時のキー名を作ります。
+
+      一般化:
+      お客様ごとに端末内保存の場所を分けるためのキー設計です。
+
+      今回の確認:
+      storage key が checkinHistory:U で始まれば、LINE userIdを使う準備ができています。
+    */
+    function getPlannedStorageKey() {
+      if (!currentCustomerCode) {
+        return '未取得';
+      }
+
+      return CHECKIN_HISTORY_KEY + ':' + maskUserId(currentCustomerCode);
+    }
+
+    /*
+      役割:
+      指定時間が過ぎたらエラーにするPromiseを作ります。
+
+      なぜ必要か:
+      LIFF SDK自体は読み込めても、liff.init() が完了しない場合があります。
+      永久に「LIFF初期化中」で止まると原因が見えないため、8秒で失敗扱いにします。
+    */
+    function timeoutAfter(milliseconds, message) {
+      return new Promise(function (_, reject) {
+        setTimeout(function () {
+          reject(new Error(message));
+        }, milliseconds);
+      });
+    }
+
+    /*
+      役割:
+      LIFFの状態を画面に表示します。
+
+      魔改造の入口:
+      保存API接続時に必要な情報を追加したい場合は、この関数に表示項目を足します。
+    */
+    function showLiffEnvironment() {
+      locationValue.textContent = location.href;
+
+      if (typeof liff.isInClient === 'function') {
+        isInClientValue.textContent = displayValue(liff.isInClient());
+      } else {
+        isInClientValue.textContent = 'このLIFF SDKでは使用できません';
+      }
+
+      isLoggedInValue.textContent = displayValue(liff.isLoggedIn());
+
+      if (typeof liff.getOS === 'function') {
+        osValue.textContent = displayValue(liff.getOS());
+      } else {
+        osValue.textContent = 'このLIFF SDKでは使用できません';
+      }
+
+      if (typeof liff.getLineVersion === 'function') {
+        lineVersionValue.textContent = displayValue(liff.getLineVersion());
+      } else {
+        lineVersionValue.textContent = 'このLIFF SDKでは使用できません';
+      }
+    }
+
+    /*
+      役割:
+      エラー内容を画面に出します。
+
+      なぜ必要か:
+      liff.init() の失敗理由は、LIFFエンドポイントURL、公開URL、LINEログイン状態などで変わります。
+      error.name、error.message、error.stack を出すことで切り分けしやすくします。
+    */
+    function showError(error) {
+      setStatus('LIFF初期化失敗', true);
+      appendLog('LIFF初期化失敗');
+      appendLog('error.name: ' + displayValue(error.name));
+      appendLog('error.message: ' + displayValue(error.message));
+
+      if (error.stack) {
+        appendLog('error.stack: ' + error.stack);
+      }
+    }
+
+    /*
+      役割:
+      LIFF初期化と LINE userId 取得だけを行います。
+
+      流れ:
+      1. liff.init() を実行する
+      2. LINEログイン状態を確認する
+      3. 未ログインなら liff.login() へ進む
+      4. ログイン済みなら liff.getProfile() で userId を取得する
+      5. currentCustomerCode に userId を入れる
+
+      危険ポイント:
+      ここでは保存処理をしません。
+      保存処理は次段階で Apps Script API に接続して作ります。
+    */
+    async function initializeLiffOnlyTest() {
+      try {
+        setStatus('LIFF初期化中');
+        appendLog('起動中');
+        appendLog('location.href: ' + location.href);
+        appendLog('LIFF_ID: ' + LIFF_ID);
+        appendLog('typeof liff: ' + typeof liff);
+
+        if (typeof liff === 'undefined') {
+          throw new Error('LIFF SDKが読み込まれていません。');
+        }
+
+        appendLog('liff.init 開始');
+        await Promise.race([
+          liff.init({ liffId: LIFF_ID }),
+          timeoutAfter(8000, 'liff.init が8秒以内に完了しませんでした。')
+        ]);
+        appendLog('liff.init 成功');
+
+        showLiffEnvironment();
+
+        setStatus('LINEログイン確認中');
+        appendLog('LINEログイン確認中');
+
+        if (!liff.isLoggedIn()) {
+          appendLog('未ログインのため liff.login() を呼びます。');
+          setStatus('LINEログインへ移動します');
+          liff.login();
+          return;
+        }
+
+        appendLog('liff.getProfile 開始');
+        const profile = await liff.getProfile();
+
+        if (!profile.userId) {
+          throw new Error('profile.userId を取得できませんでした。');
+        }
+
+        currentCustomerCode = profile.userId;
+        userIdValue.textContent = maskUserId(profile.userId);
+        storageKeyValue.textContent = getPlannedStorageKey();
+
+        appendLog('liff.getProfile 成功');
+        appendLog('profile.userId 先頭6文字: ' + maskUserId(profile.userId));
+        appendLog('storage key 予定値: ' + getPlannedStorageKey());
+
+        setStatus('LINE userId 取得成功');
+      } catch (error) {
+        showError(error);
+      }
+    }
+
+    /*
+      役割:
+      今はチェックイン保存をしないことを明示します。
+
+      なぜ必要か:
+      この段階では userId 取得だけを確認します。
+      保存API接続を混ぜると、LIFF問題と保存API問題の切り分けが難しくなります。
+    */
+    function showNextStepMessage() {
+      const message = '次の段階でApps Script APIへ保存します。現在はLIFF userId確認のみです。';
+      checkinNote.textContent = message;
+      alert(message);
+    }
+
+    checkinButton.addEventListener('click', showNextStepMessage);
+
+    initializeLiffOnlyTest();
+  </script>
+</body>
+</html>
