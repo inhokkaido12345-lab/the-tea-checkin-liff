@@ -5,14 +5,23 @@
   ==================================================
 
   役割:
-  この frontend/index.html は、GitHub Pages、Vercel、Firebase Hosting などに置く
-  外部LIFFフロントエンドです。
+  このファイルは「LIFFフロントエンド」です。
+  GitHub Pages、Vercel、Firebase Hosting などの静的ホスティング上で動く、
+  外部公開された通常のHTMLとして動きます。
+  Apps Script の HtmlService で表示される画面ではありません。
 
   なぜ作るか:
-  Google Apps Script のHTML画面では、実際の実行URLが
-  script.googleusercontent.com/userCodeAppPanel になる場合があります。
-  その結果、LINE Developers に登録した LIFF エンドポイントURLと一致せず、
-  liff.init() が完了しないことがあります。
+  Apps Script画面では、実際の実行URLが script.googleusercontent.com/userCodeAppPanel
+  になる場合があり、LINE Developers の LIFFエンドポイントURLと一致しませんでした。
+  その結果 liff.init() が完了しなかったため、画面だけをGitHub Pages側へ移しました。
+
+  設計思想:
+  - フロントエンド: LINE userId取得、画面表示、ユーザー操作を担当します。
+  - Apps Script: 検証、同日重複防止、特典二重使用防止、スプレッドシート保存を担当します。
+  - スプレッドシート: 簡易DB、かつ checkin や benefit_used を積むイベントログです。
+  Apps Scriptは画面係ではなく、保存API係に役割を絞りました。
+  この分離により、LIFFのエンドポイントURLと実行URLが一致しやすくなり、
+  将来フロントだけを作り替える時も影響範囲を小さくできます。
 
   今回確認すること:
   LIFF が初期化できること、LINE userId を取得できること、
@@ -20,6 +29,8 @@
 
   魔改造の入口:
   次の段階では、+3日判定、特典使用、localStorage本格移植をこの外部フロントへ移します。
+  本格運用では、スプレッドシートからDBへ移す、Apps Scriptから別バックエンドへ移す、
+  という変更もしやすいように役割を分けています。
 
   危険ポイント:
   LIFF公式では、liff.init() は LIFF エンドポイントURLと同じURL、
@@ -50,8 +61,15 @@
       役割:
       スマホのLINE内ブラウザで読みやすく、押しやすい見た目にします。
 
+      設計思想:
+      店頭でお客様とスタッフが同じ画面を見る前提なので、
+      ボタンは大きく、状態メッセージは短く明確にします。
+      小さな説明文よりも「今どういう状態か」が一目で分かることを優先します。
+
       魔改造の入口:
       店舗カラーを変えたい場合は、主に --main-color と --background-color を変更します。
+      今後のお客様画面ではデバッグカードを非表示にし、必要情報だけに絞ります。
+      スタッフ確認用UIとお客様操作UIを分ける場合も、このCSS周辺から見直します。
     */
     :root {
       --background-color: #f6f3ee;
@@ -293,6 +311,23 @@
       魔改造の入口:
       LIFFアプリを作り直した場合は LIFF_ID を差し替えます。
       APPS_SCRIPT_API_URL は、Apps Script Webアプリの /exec URL に差し替えます。
+
+      LIFF_ID:
+      LINE Developers Console で作成した LIFFアプリのIDです。
+      LINEトークで開くURLは https://liff.line.me/{LIFF_ID} です。
+      このURLを開くと、LINE Developers 側で設定したエンドポイントURL、
+      つまり現在はGitHub PagesのURLが開きます。
+      LIFFアプリを作り直した場合はこの値も変わります。
+      エンドポイントURLを変えただけでは LIFF_ID 自体は変わりません。
+
+      APPS_SCRIPT_API_URL:
+      Apps Script Webアプリの /exec URLを入れます。
+      GitHub Pagesから JSONP で呼ぶ保存APIの入口です。
+      Apps Scriptを新規デプロイしてURLが変わったら差し替えます。
+      同じデプロイを「新バージョンで更新」しただけなら、URLは基本的に維持されます。
+      /dev URLではなく、外部公開用の /exec URLを使います。
+      Apps Script側の公開設定は「実行ユーザー: 自分」「アクセスできるユーザー: 全員」が必要です。
+      ここが仮文字列のままだと保存できません。
     */
     const LIFF_ID = '2010326382-0mJkoibO';
     const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbxhwJ2sj81NR9X9X-pNOGz6cl65BNkF1JRFHgeqpnybPnM1-N1SxnsCmv20e63UbzGp/exec';
@@ -300,11 +335,15 @@
 
     /*
       currentCustomerCode:
-      実際に保存へ使う予定のお客様IDです。
-      今回は liff.getProfile() で取得した LINE userId を入れます。
+      現在操作中のお客様IDです。
+      LIFF成功後に liff.getProfile() で取得した LINE userId が入ります。
+      createCheckinPayload() で、保存payloadの customer_code として使われます。
+      画面上やログでは先頭6文字だけのマスク表示にしますが、
+      保存payloadにはフルの LINE userId を入れます。
 
       危険ポイント:
-      今回は簡易確認なので、画面側で取得した userId をそのまま使います。
+      LINE userId は個人識別子に近い情報なので、取り扱いに注意します。
+      今回は簡易MVPとして「LIFF内で取得した userId を送る」方式です。
       本格運用では ID token または access token をサーバー側で検証します。
     */
     let currentCustomerCode = '';
@@ -339,6 +378,13 @@
 
       なぜ必要か:
       LIFF初期化は複数の段階があるため、どこで止まったかを後から追えるようにします。
+      LINE内ブラウザでは通常の開発者コンソールが見づらいため、画面内ログが重要です。
+      API疎通、LIFF初期化、payload、responseを画面に出すことで原因を切り分けます。
+
+      危険ポイント:
+      userIdはログ上では必ずマスクします。
+      店頭本番ではデバッグログは非表示にする候補です。
+      本番ではログを最小化し、個人識別子を画面に露出しないようにします。
     */
     function appendLog(message) {
       const currentText = debugLog.textContent === 'ログ準備中' ? '' : debugLog.textContent;
@@ -393,6 +439,9 @@
       現在は確認画面なので storage key もマスク表示しています。
       本当にlocalStorageへ保存する次段階では、フルの currentCustomerCode を使う必要があります。
       マスク済みIDを保存キー本体に使うと、別ユーザーと衝突するリスクがあります。
+      次段階で localStorage を本格移植する時は、
+      getStorageKeyForCurrentCustomer() のような別関数を作り、
+      表示用のマスクキーと保存用のフルキーを分けると安全です。
     */
     function getPlannedStorageKey() {
       if (!currentCustomerCode) {
@@ -407,16 +456,23 @@
       JSONP方式で外部APIを呼びます。
 
       一般化:
-      JSONPは script タグを一時的に差し込んで外部APIを呼ぶ方式です。
-      fetch POST と違いCORSを避けられますが、呼び先を信用する必要があります。
+      JSONPは、scriptタグを動的に追加して別ドメインAPIを呼ぶ古典的な手法です。
+      fetch POST ではCORSで詰まる可能性があるため、このMVPではJSONPを使います。
+      JSONPはGET通信なので、REST的には保存操作と相性がきれいではありません。
+      ただし、Google Apps Script + GitHub Pages の疎通確認としては簡単で強い方法です。
 
       魔改造の入口:
       timeoutMilliseconds を変えると、API応答を待つ秒数を変更できます。
+      本格運用では、Cloud Run、Firebase Functions、Cloudflare Workers、
+      Supabase Edge Functions などの別API基盤も検討できます。
 
       危険ポイント:
+      JSONPでは、レスポンスがJavaScriptとして実行されます。
+      そのため、呼び先APIを信用する必要があります。
       callback名は Apps Script 側でも検証します。
-      JSONPはMVPの疎通確認用です。
-      本格運用では、より安全なAPI方式も検討します。
+      cleanup() は、一時的に作った script タグと window上のcallback関数を消す掃除処理です。
+      cleanupしないと、グローバル関数やscriptタグが画面内に溜まります。
+      timeoutは、APIが返らない時に永遠に「保存中」で止まらないための保険です。
     */
     function jsonpRequest(url, params, timeoutMilliseconds) {
       return new Promise(function (resolve, reject) {
@@ -466,6 +522,19 @@
       今回は疎通確認なので benefit_status は first_checkin で固定します。
       +3日判定や特典対象判定は次段階で移植します。
       checkin_id は将来 benefit_used と紐づけるために残します。
+
+      設計思想:
+      これはGitHub Pages側で作る「保存リクエストの中身」です。
+      customer_code は LIFF で取得した LINE userId です。
+      action は、今回はチェックインを表す checkin です。
+      checkin_id は、この1回のチェックインイベントを識別するIDです。
+      後で benefit_used を保存する時、同じ checkin_id を使って紐づけます。
+      checkin行を更新せず、benefit_used行を別イベントとして追記する考え方は、
+      イベントソーシング的な履歴設計に近いです。
+
+      将来の拡張:
+      campaign_id、store_id、benefit_type、liff_version などを足す場合は、
+      フロントのpayload、Code.gsのCOLUMNS、createCheckinRow_をセットで確認します。
     */
     function createCheckinPayload() {
       const now = new Date();
@@ -645,14 +714,21 @@
 
       一般化:
       画面側で作ったpayloadを、外部APIへ送信する処理です。
+      チェックインボタン押下時のアプリケーション制御をまとめています。
+      userId取得済みか確認し、API URLが設定済みか確認し、payloadを作り、
+      JSONPで送信し、response.ok に応じて画面表示を変えます。
 
       魔改造の入口:
       今回は疎通確認なので benefit_status は first_checkin 固定です。
       +3日判定やlocalStorage保存は次段階でここに統合します。
+      後で、保存成功時のlocalStorage更新、特典ボタン表示、+3日判定をここに統合していきます。
 
       危険ポイント:
       画面側から送る customer_code は、本格運用ではサーバー側検証が必要です。
       今回はLIFF userId取得済みの状態から、保存APIへ届くかだけを確認します。
+      ALREADY_CHECKED_IN_TODAY は業務上の正常ブロックであり、通信エラーではありません。
+      その他のエラーでは再試行できるようにボタンを戻します。
+      成功時や同日チェックイン済み時は、同じ操作を押し直せない状態にする思想です。
     */
     async function saveCheckinToAppsScriptApi() {
       if (!currentCustomerCode) {
