@@ -85,6 +85,18 @@
       -webkit-text-size-adjust: 100%;
     }
 
+    /*
+      役割:
+      hidden属性が付いた要素を確実に非表示にする保険です。
+
+      危険ポイント:
+      将来CSSを足した時に、うっかりdisplay指定でhiddenが効かなくなる事故を避けます。
+      customerモードでは、デバッグ情報を最初から見せない fail-closed 設計にします。
+    */
+    [hidden] {
+      display: none !important;
+    }
+
     body {
       margin: 0;
       min-height: 100vh;
@@ -295,7 +307,7 @@
         </p>
       </div>
 
-      <section id="debugCard" class="debug-card">
+      <section id="debugCard" class="debug-card" hidden>
         <p id="developerModeBadge" class="developer-mode-badge" hidden>開発者モード</p>
         <h2>LIFF確認ログ</h2>
         <dl class="debug-list">
@@ -460,6 +472,10 @@
       開発者だけに見せたいUIを増やす場合は、この関数に表示切り替えを追加します。
 
       危険ポイント:
+      debugCard はHTML上では最初からhiddenにしておきます。
+      devモードの時だけ applyAppMode() で表示します。
+      これにより、customerモードではJavaScript実行前から見えず、
+      JSエラー時も本番画面で開発情報が露出しにくくなります。
       customerモードでは、LINE userId の一部、APIレスポンス、payload、checkin_id などを画面に出しません。
       devモードでは、LINE内ブラウザで通常のコンソールが見づらいため、画面内ログを診断装置として残します。
       APP_MODE は本物の認証ではなく、表示切り替えだけです。
