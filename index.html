@@ -377,9 +377,22 @@
 </head>
 <body>
   <main class="page">
-    <section class="app">
+    <section id="appRoot" class="app">
       <h1>The TEA チェックイン</h1>
 
+      <!--
+        役割:
+        現在の結論を大きく1回だけ表示する場所です。
+
+        一般化:
+        アプリの現在状態を一文で返す「結論表示」です。
+        レジ前でスタッフとお客様が最初に見る場所なので、
+        特典対象、使用済み、チェックイン可能などの最重要状態だけを出します。
+
+        魔改造の入口:
+        状態別にアイコンを出したり、成功、警告、エラーで背景色を変えたりできます。
+        ただし、同じ状態文言を他のカードにも重複表示しないようにします。
+      -->
       <section class="status-card" aria-live="polite">
         <p class="status-label">状態</p>
         <p id="statusMessage" class="status-message">読み込み中です</p>
@@ -389,14 +402,23 @@
         役割:
         再来店特典の状態を、お客様にも見える形で表示するカードです。
 
+        一般化:
+        ユーザーの履歴認識を補助する説明カードです。
+        サーバー記録と顧客記憶のズレを埋めます。
+
         設計思想:
         クーポンの仕組みを隠さず、「いつ来た扱いなのか」「期限日はいつか」を明示します。
         サーバー記録とお客様の記憶のズレを減らし、
         システムだけが状態を知っている状態を避けるためです。
 
+        魔改造の入口:
+        期限日までの残り日数、スタンプカード風表示、キャンペーン別説明を追加できます。
+
         危険ポイント:
         index.html側では日付計算や特典対象判定をしません。
         Code.gs が返す customer_guidance を表示するだけにします。
+        statusMessage と同じ短い結論文を繰り返すと読みにくくなるため、
+        ここは履歴とルール説明を中心にします。
       -->
       <section id="couponInfoCard" class="coupon-info-card" aria-live="polite">
         <p class="coupon-info-label">再来店特典</p>
@@ -406,10 +428,31 @@
         <p id="nextVisitMessage" class="coupon-info-text"></p>
       </section>
 
+      <!--
+        役割:
+        今操作できるものだけを置く領域です。
+
+        一般化:
+        アプリの操作領域です。
+        チェックイン可能なら checkinFormArea、特典使用可能なら useBenefitButton を出します。
+
+        魔改造の入口:
+        後でこの領域をモーダル化したり、操作ボタンを状態別に並べ替えたりできます。
+
+        危険ポイント:
+        privacyNotice は操作ではなく説明なので、この領域の外に出しています。
+        操作と説明を分けると、action-area を丸ごと隠す時に事故りにくくなります。
+      -->
       <div class="action-area">
+        <div id="checkinFormArea" hidden>
         <!--
           役割:
-          店頭でスタッフから案内された日替わり4桁コードを入力する欄です。
+          本日チェックイン可能な時だけ表示する入力フォームです。
+
+          一般化:
+          店頭コード入力とチェックイン操作をまとめるフォームです。
+          今日すでにチェックイン済みの場合は隠し、
+          お客様に「まだ入力が必要なのか」と誤解させないようにします。
 
           設計思想:
           チェックイン時だけ必要です。
@@ -424,6 +467,10 @@
           正解コードはフロントには置きません。
           フロントは入力値をpayloadで送るだけで、正解判定はCode.gs側で行います。
           コードは日替わりなので、前日のコードは使えません。
+
+          魔改造の入口:
+          店舗コードをQR読み取りに変えたり、NFCタッチ後だけ表示したりできます。
+          店舗別コード、時間帯別コードにも拡張できます。
         -->
         <label for="storeCodeInput" class="store-code-label">
           本日の店舗コード
@@ -436,47 +483,31 @@
           pattern="[0-9]*"
           maxlength="4"
           autocomplete="one-time-code"
+          enterkeyhint="done"
+          aria-describedby="storeCodeNote"
           placeholder="4桁"
         >
         <p id="storeCodeNote" class="note">
           店頭でスタッフから案内された4桁の数字を入力してください。
         </p>
 
-        <button id="checkinButton" type="button">チェックインする</button>
+        <button id="checkinButton" type="button" disabled>チェックインする</button>
+        </div>
+        <!--
+          役割:
+          チェックイン操作の補助説明だけを表示します。
+
+          一般化:
+          入力フォームのヘルプテキストです。
+          状態の結論は statusMessage、履歴と期限は couponInfoCard に分けます。
+
+          危険ポイント:
+          「この特典は使用済みです。」のような状態文言をここに繰り返すと、
+          お客様が同じ情報を複数回読むことになります。
+        -->
         <p id="checkinNote" class="note">
           読み込み中です。
         </p>
-        <!--
-          役割:
-          お客様向けに、保存する情報と利用目的を簡潔に説明します。
-
-          設計思想:
-          これは正式なプライバシーポリシーではなく、MVP用の最低限の店頭説明です。
-          customerモードでもdevモードでも表示します。
-          デバッグ情報ではなく、お客様に見せるべき利用目的の説明だからです。
-
-          魔改造の入口:
-          本番運用前には、正式なプライバシーポリシーへのリンク、
-          店頭掲示、問い合わせ窓口、削除対応の説明を追加します。
-        -->
-        <section id="privacyNotice" class="privacy-notice">
-          <button id="privacyToggleButton" type="button" class="text-button">
-            保存される情報について
-          </button>
-
-          <div id="privacyDetail" hidden>
-            <p>
-              このチェックインでは、特典判定と二重使用防止のため、
-              LINE上の識別子、チェックイン日時、特典使用状況を保存します。
-            </p>
-            <p>
-              保存した情報は、来店チェックイン、再来店特典の判定、特典の使用済み確認のために利用します。
-            </p>
-            <p>
-              チェックインボタンまたは特典使用ボタンを押すことで、上記の範囲での利用に同意したものとして扱います。
-            </p>
-          </div>
-        </section>
         <!--
           役割:
           サーバー状態取得の結果、今日のチェックインが eligible_72h かつ未使用の場合だけ表示します。
@@ -484,8 +515,12 @@
           設計思想:
           スタッフは画面を目視確認します。
           操作はお客様本人が行い、スタッフがお客様のスマホを触らない設計にします。
+
+          危険ポイント:
+          benefitNote は、このボタンが出ている時の注意文だけを担当します。
+          特典使用済みの結論は statusMessage に寄せ、ここには重複表示しません。
         -->
-        <button id="useBenefitButton" type="button" hidden>
+        <button id="useBenefitButton" type="button" hidden disabled>
           スタッフ確認後、特典を使用する
         </button>
         <p id="benefitNote" class="note" hidden>
@@ -493,6 +528,57 @@
         </p>
       </div>
 
+      <!--
+        役割:
+        お客様向けに、保存する情報と利用目的を簡潔に説明します。
+
+        一般化:
+        保存情報と利用目的の簡易説明です。
+        操作ボタンではなく説明なので、action-area の外に置きます。
+
+        設計思想:
+        これは正式なプライバシーポリシーではなく、MVP用の最低限の店頭説明です。
+        customerモードでもdevモードでも表示します。
+        デバッグ情報ではなく、お客様に見せるべき利用目的の説明だからです。
+
+        魔改造の入口:
+        本番運用前には、正式なプライバシーポリシーへのリンク、
+        店頭掲示、問い合わせ窓口、削除対応の説明を追加します。
+        削除依頼フォームや問い合わせ導線もここに足せます。
+      -->
+      <section id="privacyNotice" class="privacy-notice">
+        <button id="privacyToggleButton" type="button" class="text-button">
+          保存される情報について
+        </button>
+
+        <div id="privacyDetail" hidden>
+          <p>
+            このチェックインでは、特典判定と二重使用防止のため、
+            LINE上の識別子、チェックイン日時、特典使用状況を保存します。
+          </p>
+          <p>
+            保存した情報は、来店チェックイン、再来店特典の判定、特典の使用済み確認のために利用します。
+          </p>
+          <p>
+            チェックインボタンまたは特典使用ボタンを押すことで、上記の範囲での利用に同意したものとして扱います。
+          </p>
+        </div>
+      </section>
+
+      <!--
+        役割:
+        LINE内ブラウザでコンソール代わりになる診断装置です。
+
+        一般化:
+        開発時だけ見せるデバッグUIです。
+
+        魔改造の入口:
+        APIレスポンス全文、state JSON、テストボタンを追加できます。
+
+        危険ポイント:
+        customerモードでは絶対に出しません。
+        userIdやAPIログに近い情報が含まれるため、HTML上でもhiddenを初期値にしています。
+      -->
       <section id="debugCard" class="debug-card" hidden>
         <p id="developerModeBadge" class="developer-mode-badge" hidden>開発者モード</p>
         <h2>LIFF確認ログ</h2>
@@ -584,17 +670,41 @@
     */
     const STATUS_ELIGIBLE_72H = 'eligible_72h';
     const STATUS_BENEFIT_USED = 'benefit_used';
+    /*
+      役割:
+      viewKind から付ける状態別CSSクラスの一覧です。
+
+      一般化:
+      UIの状態をCSSでも扱えるようにするための入口です。
+      今回は大きなデザイン変更はしませんが、将来ここを使って状態別の背景色やアイコンを出せます。
+
+      魔改造の入口:
+      view-benefit-eligible だけ枠線を強くする、view-error だけ背景色を変える、
+      view-benefit-used に使用済みアイコンを出す、といった拡張ができます。
+    */
+    const VIEW_KIND_CLASSES = [
+      'view-loading',
+      'view-checkin-available',
+      'view-benefit-eligible',
+      'view-benefit-used',
+      'view-first-checkin-done',
+      'view-already-checked-in',
+      'view-error',
+      'view-unknown'
+    ];
 
     /*
       役割:
       customerモードで表示する、お客様向けの短い文言をまとめています。
 
       一般化:
+      文言辞書です。
       画面表示文言を定数に分けると、業務ロジックと表示文言が混ざりにくくなります。
 
       魔改造の入口:
       店舗の言い回しを変えたい時は、まずここを変更します。
       devモードでは従来通り詳細ログを残し、customerモードではこの文言を優先します。
+      英語対応、多言語対応、キャンペーン別文言にも拡張できます。
     */
     const CUSTOMER_MESSAGES = {
       loading: '読み込み中です',
@@ -625,11 +735,13 @@
     let currentCustomerCode = '';
     let currentCustomerState = null;
 
+    const appRoot = document.getElementById('appRoot');
     const statusMessage = document.getElementById('statusMessage');
     const lastVisitMessage = document.getElementById('lastVisitMessage');
     const benefitRuleMessage = document.getElementById('benefitRuleMessage');
     const currentCouponMessage = document.getElementById('currentCouponMessage');
     const nextVisitMessage = document.getElementById('nextVisitMessage');
+    const checkinFormArea = document.getElementById('checkinFormArea');
     const checkinButton = document.getElementById('checkinButton');
     const useBenefitButton = document.getElementById('useBenefitButton');
     const storeCodeInput = document.getElementById('storeCodeInput');
@@ -724,7 +836,48 @@
       補足文もモードに応じて切り替えます。
     */
     function setModeNote(customerMessage, devMessage) {
-      checkinNote.textContent = isDevMode() ? (devMessage || customerMessage) : customerMessage;
+      setNoteElement(checkinNote, isDevMode() ? (devMessage || customerMessage) : customerMessage);
+    }
+
+    /*
+      役割:
+      補足文の有無に応じて、note要素の表示と非表示を切り替えます。
+
+      一般化:
+      空の説明文なら非表示、説明がある時だけ表示する小さな表示ヘルパーです。
+
+      魔改造の入口:
+      後で注意文、成功補足、エラー補足でクラスを変えたい場合は、この関数に引数を増やします。
+
+      危険ポイント:
+      空のnoteを表示したままにすると、余白だけ残ったり、同じ文言を別の場所にも出したりしやすくなります。
+    */
+    function setNoteElement(element, message) {
+      const hasMessage = Boolean(message);
+
+      element.hidden = !hasMessage;
+      element.textContent = hasMessage ? message : '';
+    }
+
+    /*
+      役割:
+      viewKind を appRoot のCSSクラスへ反映します。
+
+      一般化:
+      UI状態をDOMのclassとして表す処理です。
+      JavaScriptの状態とCSSの状態を橋渡しします。
+
+      魔改造の入口:
+      今回は入口だけ作ります。
+      将来、状態別に背景色、アイコン、枠線色を変える場合はCSS側で viewKind クラスを使います。
+    */
+    function applyViewKindClass(viewKind) {
+      const safeViewKind = viewKind || 'unknown';
+
+      VIEW_KIND_CLASSES.forEach(function (className) {
+        appRoot.classList.remove(className);
+      });
+      appRoot.classList.add('view-' + safeViewKind.replace(/_/g, '-'));
     }
 
     /*
@@ -972,6 +1125,26 @@
 
     /*
       役割:
+      店舗コード入力欄から数字以外を取り除き、最大4桁にそろえます。
+
+      一般化:
+      入力補正です。
+      スマホ入力時に数字以外が混ざる事故を減らします。
+
+      魔改造の入口:
+      将来、QR読み取りやNFC読み取りに変える場合は、この入力補正を置き換えます。
+
+      危険ポイント:
+      これは利便性のためであり、セキュリティではありません。
+      正しいコードかどうかの判定は必ずCode.gs側で行います。
+      4桁入力された瞬間に自動送信せず、お客様が明示的にチェックインボタンを押す構造を維持します。
+    */
+    function normalizeStoreCodeInput() {
+      storeCodeInput.value = storeCodeInput.value.replace(/\D/g, '').slice(0, 4);
+    }
+
+    /*
+      役割:
       Apps Script JSONP API の疎通確認をします。
 
       なぜ必要か:
@@ -1034,18 +1207,34 @@
           return;
         }
 
-        setModeStatus(
-          CUSTOMER_MESSAGES.communicationError,
-          response.message || '状態取得に失敗しました。',
-          true
-        );
+        applyCustomerViewState({
+          statusMessage: CUSTOMER_MESSAGES.communicationError,
+          statusDevMessage: response.message || '状態取得に失敗しました。',
+          isError: true,
+          checkinNote: '',
+          checkinDevNote: 'getCustomerState が ok:false を返しました。',
+          showCheckinForm: false,
+          enableCheckinButton: false,
+          showBenefitButton: false,
+          enableBenefitButton: false,
+          benefitNote: '',
+          viewKind: 'error'
+        });
         renderCouponInfo(null, true);
       } catch (error) {
-        setModeStatus(
-          CUSTOMER_MESSAGES.communicationError,
-          '状態取得に失敗しました。',
-          true
-        );
+        applyCustomerViewState({
+          statusMessage: CUSTOMER_MESSAGES.communicationError,
+          statusDevMessage: '状態取得に失敗しました。',
+          isError: true,
+          checkinNote: '',
+          checkinDevNote: 'getCustomerState の通信またはJSONP実行に失敗しました。',
+          showCheckinForm: false,
+          enableCheckinButton: false,
+          showBenefitButton: false,
+          enableBenefitButton: false,
+          benefitNote: '',
+          viewKind: 'error'
+        });
         renderCouponInfo(null, true);
         appendLog('getCustomerState 失敗: ' + displayValue(error.message));
       }
@@ -1082,6 +1271,11 @@
       設計思想:
       クーポン機能を隠さず、お客様が自分の状態を誤解しにくい画面にします。
       「前回チェックイン日」「特典ルール」「今回の状態」「次回期限」を明示します。
+      statusMessage は「現在の結論」、checkinNote と benefitNote は「操作補助」を担当します。
+      同じ短文を複数箇所に出すと、お客様が同じ情報を二重に読まされます。
+      そのため、customer_guidance は履歴とルール説明として使い、状態結論は statusMessage に寄せます。
+      Sally-Anne課題的には、システムが知っている記録を顧客にも見せることが重要です。
+      ただし、見せすぎるとノイズになるため、1情報1箇所を原則にします。
 
       一般化:
       これはサーバー状態の表示処理です。
@@ -1113,20 +1307,46 @@
 
       lastVisitMessage.textContent = guidance.last_visit_message || '';
       benefitRuleMessage.textContent = guidance.benefit_rule_message || '';
-      currentCouponMessage.textContent = guidance.current_status_message || '';
+      currentCouponMessage.textContent = state && state.today_checkin
+        ? ''
+        : (guidance.current_status_message || '');
       nextVisitMessage.textContent = guidance.next_visit_message || '';
     }
 
     /*
       役割:
-      サーバー状態に応じて、チェックインボタンと特典使用ボタンの表示を更新します。
+      サーバー状態 state を、画面表示専用の viewState へ翻訳します。
 
       一般化:
-      これは表示制御です。
-      特典対象か、同日チェックイン済みか、使用済みかという正本判定はサーバー側が返した state を使います。
+      viewState は「サーバー状態を画面状態に翻訳したもの」です。
+      業務判定の正本ではありません。
+      Code.gs が返した state.today_checkin や state.today_benefit_used を、
+      ボタン表示、補足文、状態クラスへ変換します。
+
+      魔改造の入口:
+      状態別アイコン、状態別背景色、多言語対応、スタンプカードUIを入れる時の基盤になります。
+      状態が増えたら、まずここに viewKind と表示文言の分岐を追加します。
+
+      危険ポイント:
+      ここでは日付計算や特典対象期間の判定をしません。
+      特典判定の正本は Code.gs とスプレッドシートです。
     */
-    function renderCustomerState(state) {
-      renderCouponInfo(state);
+    function deriveCustomerViewState(state) {
+      if (!state) {
+        return {
+          statusMessage: CUSTOMER_MESSAGES.loading,
+          statusDevMessage: 'getCustomerState の結果待ちです。',
+          isError: false,
+          checkinNote: CUSTOMER_MESSAGES.loading,
+          checkinDevNote: 'サーバー状態を取得するまで操作欄は非表示にします。',
+          showCheckinForm: false,
+          enableCheckinButton: false,
+          showBenefitButton: false,
+          enableBenefitButton: false,
+          benefitNote: '',
+          viewKind: 'loading'
+        };
+      }
 
       const todayCheckin = state && state.today_checkin ? state.today_checkin : null;
       const todayStatus = todayCheckin ? todayCheckin.benefit_status : '';
@@ -1136,76 +1356,141 @@
         state.today_benefit_used === false
       );
 
-      useBenefitButton.hidden = true;
-      useBenefitButton.disabled = false;
-      benefitNote.hidden = true;
-      benefitNote.textContent = CUSTOMER_MESSAGES.benefitNotice;
-
-      if (!state) {
-        return;
-      }
-
       if (state.can_checkin === true) {
-        checkinButton.disabled = false;
-        setModeStatus(
-          CUSTOMER_MESSAGES.checkinAvailable,
-          state.next_checkin_message || 'チェックインできます'
-        );
-        setModeNote(
-          CUSTOMER_MESSAGES.checkinAvailable,
-          'チェックインボタンを押すと、サーバー側で状態判定して保存します。'
-        );
-      } else {
-        checkinButton.disabled = true;
-        if (canUseBenefit) {
-          setModeStatus(
-            CUSTOMER_MESSAGES.benefitEligible,
-            '本日はすでにチェックイン済みです。特典対象です。'
-          );
-          setModeNote(
-            CUSTOMER_MESSAGES.benefitEligible,
-            '今日のチェックインが eligible_72h のため、特典使用ボタンを表示できます。'
-          );
-        } else if (state.today_benefit_used === true) {
-          setModeStatus(
-            CUSTOMER_MESSAGES.benefitUsed,
-            'この特典は使用済みです。'
-          );
-          setModeNote(
-            CUSTOMER_MESSAGES.benefitUsed,
-            '同じ checkin_id の benefit_used が保存済みです。'
-          );
-        } else if (todayStatus === 'first_checkin') {
-          setModeStatus(
-            CUSTOMER_MESSAGES.firstCheckinComplete,
-            '本日はすでにチェックイン済みです。初回チェックインです。'
-          );
-          setModeNote(
-            CUSTOMER_MESSAGES.firstCheckinComplete,
-            '今日の benefit_status は first_checkin です。'
-          );
-        } else {
-          setModeStatus(
-            CUSTOMER_MESSAGES.alreadyCheckedIn,
-            '本日はすでにチェックイン済みです。'
-          );
-          setModeNote(
-            CUSTOMER_MESSAGES.alreadyCheckedIn,
-            'サーバー側の同日重複防止により、今日の再チェックインは保存されません。'
-          );
-        }
+        return {
+          statusMessage: CUSTOMER_MESSAGES.checkinAvailable,
+          statusDevMessage: state.next_checkin_message || 'チェックインできます',
+          isError: false,
+          checkinNote: '店頭で案内された4桁コードを入力してチェックインしてください。',
+          checkinDevNote: 'チェックインボタンを押すと、サーバー側で状態判定して保存します。',
+          showCheckinForm: true,
+          enableCheckinButton: true,
+          showBenefitButton: false,
+          enableBenefitButton: false,
+          benefitNote: '',
+          viewKind: 'checkin_available'
+        };
       }
 
       if (canUseBenefit) {
-        useBenefitButton.hidden = false;
-        benefitNote.hidden = false;
-        return;
+        return {
+          statusMessage: CUSTOMER_MESSAGES.benefitEligible,
+          statusDevMessage: '本日はすでにチェックイン済みです。特典対象です。',
+          isError: false,
+          checkinNote: 'スタッフ確認後、下のボタンで特典を使用してください。',
+          checkinDevNote: '今日のチェックインが eligible_72h のため、特典使用ボタンを表示できます。',
+          showCheckinForm: false,
+          enableCheckinButton: false,
+          showBenefitButton: true,
+          enableBenefitButton: true,
+          benefitNote: CUSTOMER_MESSAGES.benefitNotice,
+          viewKind: 'benefit_eligible'
+        };
       }
 
       if (state.today_benefit_used === true) {
-        benefitNote.hidden = false;
-        benefitNote.textContent = CUSTOMER_MESSAGES.benefitUsed;
+        return {
+          statusMessage: CUSTOMER_MESSAGES.benefitUsed,
+          statusDevMessage: 'この特典は使用済みです。',
+          isError: false,
+          checkinNote: '',
+          checkinDevNote: '',
+          showCheckinForm: false,
+          enableCheckinButton: false,
+          showBenefitButton: false,
+          enableBenefitButton: false,
+          benefitNote: '',
+          viewKind: 'benefit_used'
+        };
       }
+
+      if (todayStatus === 'first_checkin') {
+        return {
+          statusMessage: CUSTOMER_MESSAGES.firstCheckinComplete,
+          statusDevMessage: '本日はすでにチェックイン済みです。初回チェックインです。',
+          isError: false,
+          checkinNote: '次回ご来店時にまたチェックインできます。',
+          checkinDevNote: '今日の benefit_status は first_checkin です。',
+          showCheckinForm: false,
+          enableCheckinButton: false,
+          showBenefitButton: false,
+          enableBenefitButton: false,
+          benefitNote: '',
+          viewKind: 'first_checkin_done'
+        };
+      }
+
+      return {
+        statusMessage: CUSTOMER_MESSAGES.alreadyCheckedIn,
+        statusDevMessage: '本日はすでにチェックイン済みです。',
+        isError: false,
+        checkinNote: '次回ご来店時にまたチェックインできます。',
+        checkinDevNote: 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。',
+        showCheckinForm: false,
+        enableCheckinButton: false,
+        showBenefitButton: false,
+        enableBenefitButton: false,
+        benefitNote: '',
+        viewKind: 'already_checked_in'
+      };
+    }
+
+    /*
+      役割:
+      viewState を実際のDOMへ反映します。
+
+      一般化:
+      deriveCustomerViewState は「考える」、applyCustomerViewState は「画面へ反映する」担当です。
+      計算とDOM操作を分けると、後からテストしやすくなります。
+
+      魔改造の入口:
+      状態別アイコン、状態別背景色、モーダル表示を足す時はここにDOM反映を追加します。
+
+      危険ポイント:
+      表示の一貫性を保つため、DOM操作を分散させすぎないようにします。
+      checkinNote と benefitNote は setNoteElement を通し、空文字なら非表示にします。
+    */
+    function applyCustomerViewState(viewState) {
+      const safeViewState = viewState || deriveCustomerViewState(null);
+
+      applyViewKindClass(safeViewState.viewKind || 'unknown');
+      setModeStatus(
+        safeViewState.statusMessage || CUSTOMER_MESSAGES.communicationError,
+        safeViewState.statusDevMessage || safeViewState.statusMessage,
+        safeViewState.isError
+      );
+
+      checkinFormArea.hidden = !safeViewState.showCheckinForm;
+      checkinButton.disabled = !safeViewState.enableCheckinButton;
+      setNoteElement(
+        checkinNote,
+        isDevMode()
+          ? (safeViewState.checkinDevNote || safeViewState.checkinNote)
+          : safeViewState.checkinNote
+      );
+
+      useBenefitButton.hidden = !safeViewState.showBenefitButton;
+      useBenefitButton.disabled = !safeViewState.enableBenefitButton;
+      setNoteElement(
+        benefitNote,
+        safeViewState.showBenefitButton ? safeViewState.benefitNote : ''
+      );
+    }
+
+    /*
+      役割:
+      サーバー状態を受け取り、クーポン説明と操作UIを更新します。
+
+      一般化:
+      renderCustomerState は、renderCouponInfo と applyCustomerViewState へ責務を分ける入口です。
+      stateを直接DOMへ流し込まず、viewStateを経由します。
+    */
+    function renderCustomerState(state) {
+      renderCouponInfo(state);
+
+      const viewState = deriveCustomerViewState(state);
+
+      applyCustomerViewState(viewState);
     }
 
     /*
@@ -1305,8 +1590,8 @@
             'この特典は使用済みです'
           );
           useBenefitButton.hidden = true;
-          benefitNote.hidden = false;
-          benefitNote.textContent = CUSTOMER_MESSAGES.benefitUsed;
+          benefitNote.hidden = true;
+          benefitNote.textContent = '';
           await loadCustomerStateFromApi();
           return;
         }
@@ -1318,6 +1603,8 @@
             true
           );
           useBenefitButton.hidden = true;
+          benefitNote.hidden = true;
+          benefitNote.textContent = '';
           await loadCustomerStateFromApi();
           return;
         }
@@ -1395,11 +1682,19 @@
       error.name、error.message、error.stack を出すことで切り分けしやすくします。
     */
     function showError(error) {
-      setModeStatus(
-        CUSTOMER_MESSAGES.communicationError,
-        'LIFF初期化失敗',
-        true
-      );
+      applyCustomerViewState({
+        statusMessage: CUSTOMER_MESSAGES.communicationError,
+        statusDevMessage: 'LIFF初期化失敗',
+        isError: true,
+        checkinNote: '',
+        checkinDevNote: 'LIFF初期化に失敗したため、操作欄は非表示にします。',
+        showCheckinForm: false,
+        enableCheckinButton: false,
+        showBenefitButton: false,
+        enableBenefitButton: false,
+        benefitNote: '',
+        viewKind: 'error'
+      });
       appendLog('LIFF初期化失敗');
       appendLog('error.name: ' + displayValue(error.name));
       appendLog('error.message: ' + displayValue(error.message));
@@ -1559,7 +1854,7 @@
           );
           storeCodeInput.value = '';
           setModeNote(
-            'チェックインが完了しました。',
+            '状態を更新しています。',
             'チェックイン保存に成功しました。'
           );
           await loadCustomerStateFromApi();
@@ -1578,15 +1873,19 @@
         }
 
         if (response.code === 'ALREADY_CHECKED_IN_TODAY') {
-          setModeStatus(
-            CUSTOMER_MESSAGES.alreadyCheckedIn,
-            '本日はすでにチェックイン済みです',
-            true
-          );
-          setModeNote(
-            CUSTOMER_MESSAGES.alreadyCheckedIn,
-            'サーバー側の同日重複防止により、今日の再チェックインは保存されません。'
-          );
+          applyCustomerViewState({
+            statusMessage: CUSTOMER_MESSAGES.alreadyCheckedIn,
+            statusDevMessage: '本日はすでにチェックイン済みです',
+            isError: true,
+            checkinNote: '次回ご来店時にまたチェックインできます。',
+            checkinDevNote: 'サーバー側の同日重複防止により、今日の再チェックインは保存されません。',
+            showCheckinForm: false,
+            enableCheckinButton: false,
+            showBenefitButton: false,
+            enableBenefitButton: false,
+            benefitNote: '',
+            viewKind: 'already_checked_in'
+          });
           await loadCustomerStateFromApi();
           return;
         }
@@ -1611,13 +1910,10 @@
     checkinButton.addEventListener('click', saveCheckinToAppsScriptApi);
     useBenefitButton.addEventListener('click', saveBenefitUsedToAppsScriptApi);
     privacyToggleButton.addEventListener('click', togglePrivacyDetail);
+    storeCodeInput.addEventListener('input', normalizeStoreCodeInput);
 
     applyAppMode();
-    setModeStatus(CUSTOMER_MESSAGES.loading, '起動中');
-    setModeNote(
-      CUSTOMER_MESSAGES.loading,
-      'LINE userId を取得できたら、Apps Script API へチェックイン保存を送信します。'
-    );
+    applyCustomerViewState(deriveCustomerViewState(null));
     initializeLiffOnlyTest();
   </script>
 </body>
