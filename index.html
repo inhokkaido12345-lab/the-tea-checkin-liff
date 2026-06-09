@@ -28,7 +28,9 @@
   その userId を使って Apps Script JSONP API へチェックイン保存できることを確認します。
 
   魔改造の入口:
-  次の段階では、+3日判定、特典使用、localStorage本格移植をこの外部フロントへ移します。
+  再来店特典の有効日数は、Code.gs と settings シートで管理します。
+  フロント側はサーバーから返る state.next_checkin_message や benefit_status を表示するだけです。
+  日数を変更しても、基本的に index.html は変更しません。
   本格運用では、スプレッドシートからDBへ移す、Apps Scriptから別バックエンドへ移す、
   という変更もしやすいように役割を分けています。
 
@@ -159,6 +161,40 @@
       color: var(--danger-color);
     }
 
+    .coupon-info-card {
+      box-sizing: border-box;
+      width: 100%;
+      margin-top: 18px;
+      padding: 18px;
+      background: #fffaf2;
+      border: 1px solid #e7d3ad;
+      border-radius: 12px;
+      text-align: left;
+    }
+
+    .coupon-info-label {
+      margin: 0 0 8px;
+      color: #7a4d14;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+
+    .coupon-info-main {
+      margin: 0 0 8px;
+      color: var(--text-color);
+      font-size: clamp(18px, 4.8vw, 24px);
+      font-weight: 800;
+      line-height: 1.5;
+    }
+
+    .coupon-info-text {
+      margin: 6px 0 0;
+      color: var(--muted-color);
+      font-size: clamp(14px, 3.8vw, 17px);
+      line-height: 1.7;
+    }
+
     .action-area {
       margin-top: 22px;
       text-align: center;
@@ -200,6 +236,31 @@
       font-size: clamp(14px, 3.8vw, 17px);
       line-height: 1.7;
       text-align: left;
+    }
+
+    .store-code-label {
+      display: block;
+      max-width: 420px;
+      margin: 18px auto 8px;
+      color: var(--muted-color);
+      font-size: clamp(14px, 3.8vw, 17px);
+      font-weight: 700;
+      text-align: left;
+    }
+
+    .store-code-input {
+      box-sizing: border-box;
+      width: min(88vw, 420px);
+      min-height: 56px;
+      padding: 12px 16px;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      background: #ffffff;
+      color: var(--text-color);
+      font-size: clamp(24px, 7vw, 34px);
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-align: center;
     }
 
     .privacy-notice {
@@ -324,7 +385,63 @@
         <p id="statusMessage" class="status-message">読み込み中です</p>
       </section>
 
+      <!--
+        役割:
+        再来店特典の状態を、お客様にも見える形で表示するカードです。
+
+        設計思想:
+        クーポンの仕組みを隠さず、「いつ来た扱いなのか」「期限日はいつか」を明示します。
+        サーバー記録とお客様の記憶のズレを減らし、
+        システムだけが状態を知っている状態を避けるためです。
+
+        危険ポイント:
+        index.html側では日付計算や特典対象判定をしません。
+        Code.gs が返す customer_guidance を表示するだけにします。
+      -->
+      <section id="couponInfoCard" class="coupon-info-card" aria-live="polite">
+        <p class="coupon-info-label">再来店特典</p>
+        <p id="lastVisitMessage" class="coupon-info-main">チェックイン履歴を確認中です。</p>
+        <p id="benefitRuleMessage" class="coupon-info-text"></p>
+        <p id="currentCouponMessage" class="coupon-info-text"></p>
+        <p id="nextVisitMessage" class="coupon-info-text"></p>
+      </section>
+
       <div class="action-area">
+        <!--
+          役割:
+          店頭でスタッフから案内された日替わり4桁コードを入力する欄です。
+
+          設計思想:
+          チェックイン時だけ必要です。
+          特典使用時には店舗コードを要求しません。
+          スタッフがお客様のスマホを触らず、お客様本人が入力します。
+          店舗コードは強固な認証ではなく、店頭で共有される合言葉です。
+          コードが友人間で共有される可能性はあります。
+          ただし、特典使用には実際の来店と購入が必要であり、
+          店外チェックインだけでは特典消費は完結しません。
+
+          危険ポイント:
+          正解コードはフロントには置きません。
+          フロントは入力値をpayloadで送るだけで、正解判定はCode.gs側で行います。
+          コードは日替わりなので、前日のコードは使えません。
+        -->
+        <label for="storeCodeInput" class="store-code-label">
+          本日の店舗コード
+        </label>
+        <input
+          id="storeCodeInput"
+          class="store-code-input"
+          type="tel"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength="4"
+          autocomplete="one-time-code"
+          placeholder="4桁"
+        >
+        <p id="storeCodeNote" class="note">
+          店頭でスタッフから案内された4桁の数字を入力してください。
+        </p>
+
         <button id="checkinButton" type="button">チェックインする</button>
         <p id="checkinNote" class="note">
           読み込み中です。
@@ -460,6 +577,11 @@
     const LIFF_ID = '2010326382-0mJkoibO';
     const APPS_SCRIPT_API_URL = 'https://script.google.com/macros/s/AKfycbxhwJ2sj81NR9X9X-pNOGz6cl65BNkF1JRFHgeqpnybPnM1-N1SxnsCmv20e63UbzGp/exec';
     const CHECKIN_HISTORY_KEY = 'checkinHistory';
+    /*
+      STATUS_ELIGIBLE_72H は歴史的な状態名です。
+      実際の特典対象期間は、Code.gs側の settings.benefit_valid_days に従います。
+      フロント側では日数判定をせず、サーバーから返る状態名を表示制御に使うだけです。
+    */
     const STATUS_ELIGIBLE_72H = 'eligible_72h';
     const STATUS_BENEFIT_USED = 'benefit_used';
 
@@ -482,7 +604,9 @@
       alreadyCheckedIn: '本日はすでにチェックイン済みです。',
       benefitUsed: 'この特典は使用済みです。',
       communicationError: '通信に失敗しました。時間をおいてもう一度お試しください。',
-      benefitNotice: 'スタッフが画面を確認した後に押してください。この操作は取り消せません。'
+      benefitNotice: 'スタッフが画面を確認した後に押してください。この操作は取り消せません。',
+      storeCodeRequired: '店頭で案内された4桁コードを入力してください。',
+      storeCodeInvalid: '店舗コードが正しくありません。スタッフへご確認ください。'
     };
 
     /*
@@ -502,8 +626,14 @@
     let currentCustomerState = null;
 
     const statusMessage = document.getElementById('statusMessage');
+    const lastVisitMessage = document.getElementById('lastVisitMessage');
+    const benefitRuleMessage = document.getElementById('benefitRuleMessage');
+    const currentCouponMessage = document.getElementById('currentCouponMessage');
+    const nextVisitMessage = document.getElementById('nextVisitMessage');
     const checkinButton = document.getElementById('checkinButton');
     const useBenefitButton = document.getElementById('useBenefitButton');
+    const storeCodeInput = document.getElementById('storeCodeInput');
+    const storeCodeNote = document.getElementById('storeCodeNote');
     const checkinNote = document.getElementById('checkinNote');
     const benefitNote = document.getElementById('benefitNote');
     const privacyToggleButton = document.getElementById('privacyToggleButton');
@@ -768,6 +898,8 @@
       ただし action=checkin では、サーバー側が過去履歴から正しい benefit_status / memo を決めます。
       フロントは正本判定を持ちません。
       checkin_id は将来 benefit_used と紐づけるために残します。
+      store_code はチェックイン時だけ送ります。
+      特典使用 benefit_used には店舗コードを入れません。
 
       設計思想:
       これはGitHub Pages側で作る「保存リクエストの中身」です。
@@ -792,8 +924,50 @@
         benefit_status: 'first_checkin',
         used_at: '',
         memo: 'GitHub Pages LIFFフロントからのチェックイン保存テスト。',
-        checkin_id: checkinId
+        checkin_id: checkinId,
+        store_code: storeCodeInput.value.trim()
       };
+    }
+
+    /*
+      役割:
+      チェックイン前に、店舗コード入力が空でないか、4桁数字かを画面側で確認します。
+
+      一般化:
+      フロント側バリデーションです。
+      明らかな入力ミスはAPI送信前に止めると、お客様に早く案内できます。
+
+      危険ポイント:
+      これは利便性のためのチェックであり、正本の検証ではありません。
+      正しい店舗コードかどうかの最終判定は、必ずCode.gs側の validateStoreCodeForToday_ が行います。
+    */
+    function validateStoreCodeInputBeforeCheckin() {
+      const storeCode = storeCodeInput.value.trim();
+
+      if (storeCode === '') {
+        setModeStatus(
+          CUSTOMER_MESSAGES.storeCodeRequired,
+          '店舗コードが空です。',
+          true
+        );
+        storeCodeNote.textContent = '店頭でスタッフから案内された4桁の数字を入力してください。';
+        storeCodeInput.focus();
+        return false;
+      }
+
+      if (!/^[0-9]{4}$/.test(storeCode)) {
+        setModeStatus(
+          '4桁の数字を入力してください。',
+          '店舗コードは4桁数字で入力してください。',
+          true
+        );
+        storeCodeNote.textContent = '店舗コードは4桁の数字です。';
+        storeCodeInput.focus();
+        return false;
+      }
+
+      storeCodeNote.textContent = '店頭でスタッフから案内された4桁の数字を入力してください。';
+      return true;
     }
 
     /*
@@ -826,7 +1000,8 @@
 
       設計思想:
       localStorage は今回はまだ正本にしません。
-      同日判定、+3日特典判定、使用済み判定はスプレッドシート上のイベントログから復元します。
+      同日判定、再来店特典の日数判定、使用済み判定はスプレッドシート上のイベントログから復元します。
+      特典有効日数はCode.gs/settingsシートで管理し、フロント側では判定しません。
       フロントは状態を受け取り、ボタン表示やメッセージ表示に使います。
     */
     async function loadCustomerStateFromApi() {
@@ -864,12 +1039,14 @@
           response.message || '状態取得に失敗しました。',
           true
         );
+        renderCouponInfo(null, true);
       } catch (error) {
         setModeStatus(
           CUSTOMER_MESSAGES.communicationError,
           '状態取得に失敗しました。',
           true
         );
+        renderCouponInfo(null, true);
         appendLog('getCustomerState 失敗: ' + displayValue(error.message));
       }
     }
@@ -900,6 +1077,48 @@
 
     /*
       役割:
+      サーバーから返った customer_guidance を、再来店特典カードへ表示します。
+
+      設計思想:
+      クーポン機能を隠さず、お客様が自分の状態を誤解しにくい画面にします。
+      「前回チェックイン日」「特典ルール」「今回の状態」「次回期限」を明示します。
+
+      一般化:
+      これはサーバー状態の表示処理です。
+      日数判定、期限日計算、特典対象判定はCode.gs側で行い、
+      フロントは返ってきた文言を表示するだけにします。
+
+      危険ポイント:
+      フロント側に benefit_valid_days の固定値を持たせません。
+      ここで日付計算を始めると、settingsシートの設定と画面表示がズレる原因になります。
+    */
+    function renderCouponInfo(state, hasError) {
+      const guidance = state && state.customer_guidance ? state.customer_guidance : null;
+
+      if (hasError) {
+        lastVisitMessage.textContent = 'チェックイン履歴を確認できませんでした。';
+        benefitRuleMessage.textContent = '時間をおいてもう一度お試しください。';
+        currentCouponMessage.textContent = '';
+        nextVisitMessage.textContent = '';
+        return;
+      }
+
+      if (!guidance) {
+        lastVisitMessage.textContent = 'チェックイン履歴を確認中です。';
+        benefitRuleMessage.textContent = '';
+        currentCouponMessage.textContent = '';
+        nextVisitMessage.textContent = '';
+        return;
+      }
+
+      lastVisitMessage.textContent = guidance.last_visit_message || '';
+      benefitRuleMessage.textContent = guidance.benefit_rule_message || '';
+      currentCouponMessage.textContent = guidance.current_status_message || '';
+      nextVisitMessage.textContent = guidance.next_visit_message || '';
+    }
+
+    /*
+      役割:
       サーバー状態に応じて、チェックインボタンと特典使用ボタンの表示を更新します。
 
       一般化:
@@ -907,6 +1126,8 @@
       特典対象か、同日チェックイン済みか、使用済みかという正本判定はサーバー側が返した state を使います。
     */
     function renderCustomerState(state) {
+      renderCouponInfo(state);
+
       const todayCheckin = state && state.today_checkin ? state.today_checkin : null;
       const todayStatus = todayCheckin ? todayCheckin.benefit_status : '';
       const canUseBenefit = Boolean(
@@ -1272,7 +1493,8 @@
       魔改造の入口:
       v0.2では、チェックイン保存後に getCustomerState を再取得します。
       サーバー側が benefit_status を決めるため、フロントは保存後に状態を読み直します。
-      後で、保存成功時のlocalStorage更新、特典ボタン表示、+3日判定をここに統合していきます。
+      後で、保存成功時のlocalStorage更新や特典ボタン表示をここに統合していきます。
+      特典有効日数の判定はCode.gs側に残し、index.html側では行いません。
 
       危険ポイント:
       画面側から送る customer_code は、本格運用ではサーバー側検証が必要です。
@@ -1305,6 +1527,10 @@
         return;
       }
 
+      if (!validateStoreCodeInputBeforeCheckin()) {
+        return;
+      }
+
       checkinButton.disabled = true;
       setModeStatus(CUSTOMER_MESSAGES.loading, '保存中');
 
@@ -1331,11 +1557,23 @@
             'チェックインが完了しました。',
             '保存成功'
           );
+          storeCodeInput.value = '';
           setModeNote(
             'チェックインが完了しました。',
             'チェックイン保存に成功しました。'
           );
           await loadCustomerStateFromApi();
+          return;
+        }
+
+        if (response.code === 'STORE_CODE_INVALID') {
+          setModeStatus(
+            CUSTOMER_MESSAGES.storeCodeInvalid,
+            response.message || '店舗コードが正しくありません。',
+            true
+          );
+          checkinButton.disabled = false;
+          storeCodeInput.focus();
           return;
         }
 
