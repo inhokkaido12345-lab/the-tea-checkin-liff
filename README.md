@@ -20,6 +20,25 @@ GitHub Pages の index.html
 - Apps Script `Code.gs`: 入力検証、状態取得、同日重複防止、特典二重使用防止、スプレッドシート保存
 - Googleスプレッドシート: 簡易DB、イベントログ
 
+## 現在の完成状態
+
+現在のシステムは、店頭MVPとして一通り動く状態です。
+
+- お客様はLINE LIFF上でチェックインできます
+- 本日の4桁店舗コードを入力し、Code.gs側で検証できます
+- 再来店特典として「次回ご来店時、対象ドリンク80円引き」を表示できます
+- 特典対象時は、お客様本人が特典使用ボタンを押せます
+- 特典使用は `benefit_used` イベントとして保存されます
+- 同日チェックイン重複をサーバー側で防止できます
+- 同じ `checkin_id` の特典二重使用をサーバー側で防止できます
+- settingsシートに本日の店舗コードと特典有効日数を保存できます
+- 従業員グループLINEへ本日のチェックインコードを送信できます
+- `setupDailyStoreCodeTrigger()` により、毎日9時台の自動生成トリガーを設定できます
+- `APP_MODE = 'customer' / 'dev'` で本番表示と開発表示を切り替えられます
+- The TEAのブランドカラーパレットを反映済みです
+
+今後の本番化課題は、不正検知、LINE ID token検証、正式なプライバシーポリシー、問い合わせと削除対応、JSONP以外のAPI方式、スプレッドシートからDBへの移行です。
+
 ## なぜ Apps Script 画面をやめたか
 
 Apps Script HtmlService の画面では、実際の実行URLが `script.googleusercontent.com` 側になることがあります。
@@ -321,6 +340,33 @@ Code.gs が返す state
 `renderCustomerState` は、クーポン説明を更新する `renderCouponInfo` と、操作UIを更新する `applyCustomerViewState` へ責務を分けています。
 これにより、状態が増えてもDOM操作が散らばりにくくなります。
 将来的に、状態別アイコン、多言語対応、スタンプカードUIを足しやすくするための整理です。
+
+## 魔改造するときの見取り図
+
+変更するときは「触る場所」と「触らない場所」を分けて考えます。
+フロントは表示と操作、Code.gsは判定と保存、スプレッドシートは正本の履歴という分担を崩さないことが基本です。
+
+| 変更したいこと | 触る場所 | 触らない場所 | 確認テスト |
+| --- | --- | --- | --- |
+| 特典額を80円から変更 | `index.html` の `COUPON_BENEFIT_TEXT`、README、店頭POP | Code.gsの日数判定 | 表示とスタッフ説明が一致するか |
+| 特典有効日数を変更 | settingsの `benefit_valid_days`、管理関数 | `index.html` の日付計算 | 2日/3日/4日で判定確認 |
+| 色を変更 | `index.html` の `:root` CSS変数 | ロジック関数 | customer/dev表示確認 |
+| 店舗コードを時間帯別にする | Code.gsのコード生成・検証 | `index.html` の正解判定 | 前時間帯コードが無効か |
+| スタンプカード化 | `getCustomerState` のstate追加、`index.html` のviewState追加 | 既存checkin保存 | 既存特典が壊れないか |
+| 多言語化 | `CUSTOMER_MESSAGES`、`customer_guidance` | `saveCheckin` | 日本語表示が壊れないか |
+| 特典種別を増やす | `benefit_type` / `benefit_value` / `campaign_id` | `checkin_id`設計 | `benefit_used`紐づけ確認 |
+| QR/NFC化 | `checkinFormArea`、店舗コード入力周辺 | Code.gsのサーバー検証 | フロント改造後もサーバーで検証 |
+| JSONP脱却 | API通信層、バックエンド | UI状態文法 | `getCustomerState` / `saveCheckin`疎通 |
+| DB移行 | Code.gsの保存・検索層 | `index.html` の表示責務 | state形式互換確認 |
+
+### カスタマイズ文法
+
+- 色は `:root` のCSS変数から変えます。新しい色を増やす前に、既存変数の意味を見直します。
+- クーポン内容は `COUPON_BENEFIT_TEXT` に置き、期限や対象判定はCode.gsのstateを正本にします。
+- 状態表示は、状態カード、再来店特典カード、checkinNote、benefitNoteの責務を分けます。
+- `state -> viewState -> DOM` の流れを守り、サーバー状態を直接DOMへ散らさないようにします。
+- index.htmlはユーザー操作の場所なので信用しすぎません。店舗コードの正解や特典判定はCode.gs側に置きます。
+- アクセストークン、groupId、店舗コードの正解はコードへ直書きしません。
 
 ## 次の魔改造候補
 
