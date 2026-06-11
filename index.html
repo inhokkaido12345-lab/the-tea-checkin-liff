@@ -38,6 +38,43 @@
   LIFF公式では、liff.init() は LIFF エンドポイントURLと同じURL、
   またはその配下のURLで実行する必要があります。
   GitHub Pages などで公開したURLを、LINE Developers の LIFF エンドポイントURLに設定してください。
+
+  ==================================================
+  画面側の文法構造メモ
+  ==================================================
+
+  色の文法:
+  色は各所に直接散らさず、基本的に :root のCSS変数で管理します。
+  新しい色を増やす前に、既存変数の意味を見直します。
+  ブランドカラーは「背景、本文、CTA、強調、枠線、補助、エラー、成功」に役割分担します。
+
+  クーポン文法:
+  COUPON_BENEFIT_TEXT は「お客様にとって何が得か」を見せる固定表示です。
+  期限や対象判定は Code.gs が返す state を正本にします。
+  index.html は便益の見せ方と操作UIだけを担当します。
+
+  状態表示文法:
+  statusMessage は現在の結論です。
+  couponInfoCard は履歴、期限、ルール、特典内容を説明します。
+  checkinNote はチェックイン操作の補足です。
+  benefitNote は特典使用ボタンが出ている時だけの注意文です。
+  1情報1箇所を原則にし、同じ文言を複数箇所に出しません。
+
+  state -> viewState -> DOM の文法:
+  Code.gs が返す state を直接DOMへ流さず、
+  deriveCustomerViewState で画面専用の viewState へ翻訳し、
+  applyCustomerViewState でDOMへ反映します。
+  業務判定は Code.gs、表示制御は index.html に分けます。
+
+  信頼境界の文法:
+  index.html はユーザー操作の場所なので、送られてくる値を信用しすぎません。
+  店舗コードの正解、特典対象判定、同日重複防止、二重使用防止は Code.gs 側です。
+  フロント側バリデーションは入力しやすさのためであり、セキュリティの正本ではありません。
+
+  未来の魔改造例:
+  80円引きを別特典にする、多言語対応、スタンプカード風UI、QR/NFCチェックイン、
+  benefit_type / benefit_value / campaign_id / store_id の追加、
+  JSONPから通常APIへの移行、スプレッドシートからDBへの移行が考えられます。
 -->
 <html lang="ja">
 <head>
@@ -74,6 +111,17 @@
       スタッフ確認用UIとお客様操作UIを分ける場合も、このCSS周辺から見直します。
     */
     :root {
+      /*
+        色の文法:
+        #F7F2EA は画面全体背景、#362318 は本文と見出し、#BC5529 は主CTAです。
+        #8C2804 は強いCTAや特典使用、#D9B68B は特典カードなどの温かい強調に使います。
+        #D8CEC2 は枠線と区切り、#8A7461 は補助文、#B85A4F はエラーや警告です。
+        #72807A は成功や穏やかな補助、#AECFF2 は情報系の小さな補助に限定します。
+
+        魔改造の入口:
+        ブランド色を変える時は、個別CSSより先にこの変数を見直します。
+        直接カラーコードを増やすと、後から全体の色調整が難しくなります。
+      */
       --background-color: #F7F2EA;
       --main-color: #BC5529;
       --main-active-color: #8C2804;
@@ -461,6 +509,8 @@
         期限日までの残り日数、スタンプカード風表示、キャンペーン別説明を追加できます。
         現在は固定表示として、チェックイン特典の内容を先に見せます。
         将来は Code.gs から benefit_type や benefit_value を返し、キャンペーン別に切り替えられます。
+        スタンプカード化する場合も、このカードに「履歴の見え方」を追加し、
+        状態の結論は statusMessage に残すと責務が崩れにくくなります。
 
         危険ポイント:
         index.html側では日付計算や特典対象判定をしません。
@@ -523,6 +573,7 @@
           魔改造の入口:
           店舗コードをQR読み取りに変えたり、NFCタッチ後だけ表示したりできます。
           店舗別コード、時間帯別コードにも拡張できます。
+          QR/NFC化しても、Code.gs側のサーバー検証を残すことが信頼境界の基本です。
         -->
         <label for="storeCodeInput" class="store-code-label">
           本日の店舗コード
@@ -567,10 +618,12 @@
           設計思想:
           スタッフは画面を目視確認します。
           操作はお客様本人が行い、スタッフがお客様のスマホを触らない設計にします。
+          特典使用時に店舗コードを要求しないのは、使用済みにする操作がお客様にとって得ではないためです。
 
           危険ポイント:
           benefitNote は、このボタンが出ている時の注意文だけを担当します。
           特典使用済みの結論は statusMessage に寄せ、ここには重複表示しません。
+          benefit_used payload の基本構造は変えず、checkin_id で対象チェックインと紐づけます。
         -->
         <button id="useBenefitButton" type="button" hidden disabled>
           80円引きを使用する
@@ -597,6 +650,7 @@
         本番運用前には、正式なプライバシーポリシーへのリンク、
         店頭掲示、問い合わせ窓口、削除対応の説明を追加します。
         削除依頼フォームや問い合わせ導線もここに足せます。
+        LINE userId は個人識別子に近いので、保存目的と問い合わせ先は本番前に必ず整理します。
       -->
       <section id="privacyNotice" class="privacy-notice">
         <button id="privacyToggleButton" type="button" class="text-button">
@@ -630,6 +684,8 @@
         危険ポイント:
         customerモードでは絶対に出しません。
         userIdやAPIログに近い情報が含まれるため、HTML上でもhiddenを初期値にしています。
+        デバッグカードはLINE内ブラウザでコンソール代わりに使う診断装置です。
+        原因調査には便利ですが、個人識別子やAPI詳細を含むため、fail-closedで隠します。
       -->
       <section id="debugCard" class="debug-card" hidden>
         <p id="developerModeBadge" class="developer-mode-badge" hidden>開発者モード</p>
@@ -726,9 +782,11 @@
       魔改造の入口:
       特典内容を変える場合は、COUPON_BENEFIT_TEXT と店頭POP、スタッフ説明を合わせます。
       将来は Code.gs から benefit_type や benefit_value を返して、キャンペーン別表示にできます。
+      例: 80円引き、トッピング無料、2杯目割引などに差し替えられます。
 
       危険ポイント:
       ここに店舗コードの正解や、特典有効日数の判定ロジックを入れないでください。
+      便益表示はフロント、対象判定はサーバーという分担を崩さないようにします。
     */
     const COUPON_BENEFIT_LABEL = 'チェックイン特典';
     const COUPON_BENEFIT_TEXT = '次回ご来店時、対象ドリンク80円引き';
@@ -750,6 +808,11 @@
       魔改造の入口:
       view-benefit-eligible だけ枠線を強くする、view-error だけ背景色を変える、
       view-benefit-used に使用済みアイコンを出す、といった拡張ができます。
+      状態が増えたら、まず viewKind 名を決め、その後 deriveCustomerViewState とCSSを足します。
+
+      危険ポイント:
+      viewKind は表示上の分類です。
+      特典対象かどうかの業務判定そのものは Code.gs の state を正本にします。
     */
     const VIEW_KIND_CLASSES = [
       'view-loading',
@@ -774,6 +837,14 @@
       店舗の言い回しを変えたい時は、まずここを変更します。
       devモードでは従来通り詳細ログを残し、customerモードではこの文言を優先します。
       英語対応、多言語対応、キャンペーン別文言にも拡張できます。
+
+      状態表示文法:
+      statusMessage に出す短い結論、checkinNote の補足、benefitNote の注意を混ぜないようにします。
+      同じ意味の文言を複数箇所に出すと、店頭でお客様が迷いやすくなります。
+
+      危険ポイント:
+      ここは表示文言の辞書であり、業務ルールの正本ではありません。
+      特典有効日数、同日重複、使用済み判定は Code.gs 側で決まります。
     */
     const CUSTOMER_MESSAGES = {
       loading: '読み込み中です',
@@ -1067,6 +1138,8 @@
       timeoutMilliseconds を変えると、API応答を待つ秒数を変更できます。
       本格運用では、Cloud Run、Firebase Functions、Cloudflare Workers、
       Supabase Edge Functions などの別API基盤も検討できます。
+      JSONPから通常APIへ移行する場合は、この関数を fetch ラッパーに置き換え、
+      loadCustomerStateFromApi、saveCheckinToAppsScriptApi、saveBenefitUsedToAppsScriptApi の呼び出し形を合わせます。
 
       危険ポイント:
       JSONPでは、レスポンスがJavaScriptとして実行されます。
@@ -1140,6 +1213,8 @@
       将来の拡張:
       campaign_id、store_id、benefit_type、liff_version などを足す場合は、
       フロントのpayload、Code.gsのCOLUMNS、createCheckinRow_をセットで確認します。
+      QR/NFC化しても、payloadには「サーバーで検証する材料」だけを入れ、
+      正解値そのものはフロントに置かない方針を守ります。
     */
     function createCheckinPayload() {
       const now = new Date();
@@ -1359,6 +1434,8 @@
       危険ポイント:
       フロント側に benefit_valid_days の固定値を持たせません。
       ここで日付計算を始めると、settingsシートの設定と画面表示がズレる原因になります。
+      期限日までの残り日数を表示したい場合も、まずCode.gsのstateへ表示用値を追加し、
+      index.htmlはそれを表示するだけにします。
     */
     function renderCouponInfo(state, hasError) {
       const guidance = state && state.customer_guidance ? state.customer_guidance : null;
@@ -1400,10 +1477,13 @@
       魔改造の入口:
       状態別アイコン、状態別背景色、多言語対応、スタンプカードUIを入れる時の基盤になります。
       状態が増えたら、まずここに viewKind と表示文言の分岐を追加します。
+      多言語化する場合は、CUSTOMER_MESSAGES と customer_guidance の翻訳を用意し、
+      この関数では「どの文言キーを使うか」だけを決める形にすると保守しやすくなります。
 
       危険ポイント:
       ここでは日付計算や特典対象期間の判定をしません。
       特典判定の正本は Code.gs とスプレッドシートです。
+      stateに無い情報をフロント側で推測して表示すると、サーバー記録と画面表示がズレます。
     */
     function deriveCustomerViewState(state) {
       if (!state) {
@@ -1519,10 +1599,12 @@
 
       魔改造の入口:
       状態別アイコン、状態別背景色、モーダル表示を足す時はここにDOM反映を追加します。
+      viewKindごとのCSSクラスは applyViewKindClass で付くため、CSSだけで見た目を変えられます。
 
       危険ポイント:
       表示の一貫性を保つため、DOM操作を分散させすぎないようにします。
       checkinNote と benefitNote は setNoteElement を通し、空文字なら非表示にします。
+      同じDOMを別関数から直接更新し始めると、状態文言の重複やボタン表示の矛盾が起きやすくなります。
     */
     function applyCustomerViewState(viewState) {
       const safeViewState = viewState || deriveCustomerViewState(null);
