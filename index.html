@@ -561,6 +561,7 @@
           特典使用時には店舗コードを要求しません。
           スタッフがお客様のスマホを触らず、お客様本人が入力します。
           店舗コードは強固な認証ではなく、店頭で共有される合言葉です。
+          2桁化は、セキュリティ強化ではなく、店頭での入力しやすさとスタッフの伝えやすさを優先するUX変更です。
           コードが友人間で共有される可能性はあります。
           ただし、特典使用には実際の来店と購入が必要であり、
           店外チェックインだけでは特典消費は完結しません。
@@ -568,6 +569,8 @@
           危険ポイント:
           正解コードはフロントには置きません。
           フロントは入力値をpayloadで送るだけで、正解判定はCode.gs側で行います。
+          2桁は100通りしかないため、総当たり耐性は低いです。
+          不正が問題化した場合は、failed_attemptイベントや短時間連続失敗制限をCode.gs側に追加します。
           コードは日替わりなので、前日のコードは使えません。
 
           魔改造の入口:
@@ -584,14 +587,14 @@
           type="tel"
           inputmode="numeric"
           pattern="[0-9]*"
-          maxlength="4"
+          maxlength="2"
           autocomplete="one-time-code"
           enterkeyhint="done"
           aria-describedby="storeCodeNote"
-          placeholder="4桁"
+          placeholder="2桁"
         >
         <p id="storeCodeNote" class="note">
-          店頭でスタッフから案内された4桁の数字を入力してください。
+          店頭でスタッフから案内された2桁の数字を入力してください。
         </p>
 
         <button id="checkinButton" type="button" disabled>チェックインする</button>
@@ -799,6 +802,22 @@
     const STATUS_BENEFIT_USED = 'benefit_used';
     /*
       役割:
+      店舗コード入力欄の桁数と、画面側の入力チェック形式です。
+
+      設計思想:
+      店舗コードは認証ではなく、店頭で案内する合言葉です。
+      2桁化はセキュリティ強化ではなく、入力摩擦を下げるためのUX変更です。
+      フロント側では「2桁数字らしいか」だけを確認し、正解判定はCode.gs側へ送ります。
+
+      危険ポイント:
+      2桁は100通りしかないため、総当たり耐性は低いです。
+      店舗コードの正解は絶対にindex.htmlへ書かず、Code.gs/settingsシート側で検証します。
+      不正が問題化したら、failed_attemptイベントや短時間連続失敗制限をサーバー側に追加します。
+    */
+    const STORE_CODE_DIGITS = 2;
+    const STORE_CODE_PATTERN = /^[0-9]{2}$/;
+    /*
+      役割:
       viewKind から付ける状態別CSSクラスの一覧です。
 
       一般化:
@@ -855,7 +874,7 @@
       benefitUsed: 'この80円引きは使用済みです。',
       communicationError: '通信に失敗しました。時間をおいてもう一度お試しください。',
       benefitNotice: 'スタッフが画面を確認した後に押してください。80円引きの使用済みとして記録されます。',
-      storeCodeRequired: '店頭で案内された4桁コードを入力してください。',
+      storeCodeRequired: '店頭で案内された2桁コードを入力してください。',
       storeCodeInvalid: '店舗コードが正しくありません。スタッフへご確認ください。'
     };
 
@@ -1215,6 +1234,11 @@
       フロントのpayload、Code.gsのCOLUMNS、createCheckinRow_をセットで確認します。
       QR/NFC化しても、payloadには「サーバーで検証する材料」だけを入れ、
       正解値そのものはフロントに置かない方針を守ります。
+
+      危険ポイント:
+      店舗コードは2桁の合言葉として送りますが、ここでは正しいかどうかを判断しません。
+      正解判定、日付一致、同日重複防止はCode.gs側で行います。
+      フロント側の2桁チェックは入力補助であり、信頼できる検証ではありません。
     */
     function createCheckinPayload() {
       const now = new Date();
@@ -1233,7 +1257,7 @@
 
     /*
       役割:
-      チェックイン前に、店舗コード入力が空でないか、4桁数字かを画面側で確認します。
+      チェックイン前に、店舗コード入力が空でないか、2桁数字かを画面側で確認します。
 
       一般化:
       フロント側バリデーションです。
@@ -1242,6 +1266,7 @@
       危険ポイント:
       これは利便性のためのチェックであり、正本の検証ではありません。
       正しい店舗コードかどうかの最終判定は、必ずCode.gs側の validateStoreCodeForToday_ が行います。
+      2桁は入力しやすい一方で総当たりには弱いため、不正が問題化したらサーバー側に失敗履歴と制限を追加します。
     */
     function validateStoreCodeInputBeforeCheckin() {
       const storeCode = storeCodeInput.value.trim();
@@ -1252,29 +1277,29 @@
           '店舗コードが空です。',
           true
         );
-        storeCodeNote.textContent = '店頭でスタッフから案内された4桁の数字を入力してください。';
+        storeCodeNote.textContent = '店頭でスタッフから案内された2桁の数字を入力してください。';
         storeCodeInput.focus();
         return false;
       }
 
-      if (!/^[0-9]{4}$/.test(storeCode)) {
+      if (!STORE_CODE_PATTERN.test(storeCode)) {
         setModeStatus(
-          '4桁の数字を入力してください。',
-          '店舗コードは4桁数字で入力してください。',
+          '2桁の数字を入力してください。',
+          '店舗コードは2桁数字で入力してください。',
           true
         );
-        storeCodeNote.textContent = '店舗コードは4桁の数字です。';
+        storeCodeNote.textContent = '店舗コードは2桁の数字です。';
         storeCodeInput.focus();
         return false;
       }
 
-      storeCodeNote.textContent = '店頭でスタッフから案内された4桁の数字を入力してください。';
+      storeCodeNote.textContent = '店頭でスタッフから案内された2桁の数字を入力してください。';
       return true;
     }
 
     /*
       役割:
-      店舗コード入力欄から数字以外を取り除き、最大4桁にそろえます。
+      店舗コード入力欄から数字以外を取り除き、最大2桁にそろえます。
 
       一般化:
       入力補正です。
@@ -1286,10 +1311,10 @@
       危険ポイント:
       これは利便性のためであり、セキュリティではありません。
       正しいコードかどうかの判定は必ずCode.gs側で行います。
-      4桁入力された瞬間に自動送信せず、お客様が明示的にチェックインボタンを押す構造を維持します。
+      2桁入力された瞬間に自動送信せず、お客様が明示的にチェックインボタンを押す構造を維持します。
     */
     function normalizeStoreCodeInput() {
-      storeCodeInput.value = storeCodeInput.value.replace(/\D/g, '').slice(0, 4);
+      storeCodeInput.value = storeCodeInput.value.replace(/\D/g, '').slice(0, STORE_CODE_DIGITS);
     }
 
     /*
@@ -1515,7 +1540,7 @@
           statusMessage: CUSTOMER_MESSAGES.checkinAvailable,
           statusDevMessage: state.next_checkin_message || 'チェックインできます',
           isError: false,
-          checkinNote: '店頭で案内された4桁コードを入力してチェックインしてください。',
+          checkinNote: '店頭で案内された2桁コードを入力してチェックインしてください。',
           checkinDevNote: 'チェックインボタンを押すと、サーバー側で状態判定して保存します。',
           showCheckinForm: true,
           enableCheckinButton: true,
