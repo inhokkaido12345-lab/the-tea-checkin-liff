@@ -146,6 +146,27 @@ GitHub Pages側の `index.html` は日数判定を持ちません。
 既に `settings` シートに `benefit_valid_days = 3` が入っている場合、デフォルト値よりsettingsの値が優先されます。
 推奨設定へ戻す時は、Apps Scriptエディタから `setBenefitValidDaysTo7ForAdmin()` または `applyRecommendedCheckinSettingsForAdmin()` を手動実行します。
 
+## benefit_status の命名整理
+
+以前は `eligible_72h` / `expired_72h` という状態名を使っていました。
+しかし、現在の再来店特典は72時間固定ではなく、`settings.benefit_valid_days` によって7日、14日などへ変更できます。
+そのため、時間を含む状態名は現在の運用とズレて見えます。
+
+現在の新規保存では、次の意味ベースの状態名を使います。
+
+- `first_checkin`: 初回または前回履歴がないチェックイン
+- `benefit_eligible`: 前回チェックインから有効期間内の再来店。80円引き対象
+- `benefit_period_ended`: 前回分の特典期間が終了した後の来店。本日のチェックインで次回特典を付与
+- `benefit_used`: 特典使用済み
+
+既存スプレッドシートには、旧名称 `eligible_72h` / `expired_72h` が残っている場合があります。
+これらは過去データとして残して構いません。
+過去にどの時点の仕様で保存されたかという履歴でもあるため、一括置換は行いません。
+
+Code.gs と index.html は、読み取り時に旧状態名を新状態名へ正規化して扱います。
+つまり、既存の `eligible_72h` 行は画面上では `benefit_eligible` と同じ特典対象として扱われます。
+既存の `expired_72h` 行は、画面上では `benefit_period_ended` と同じく「本日のご来店分として次回特典をお付けできます」という文脈で扱われます。
+
 ## 店頭運用改善：期限付きクーポンから来店チェックインへ
 
 この施策は、お客様を短期間で急かすための「期限付きクーポン」ではなく、本日のご来店分として次回特典をお付けする「来店チェックイン特典」として運用します。

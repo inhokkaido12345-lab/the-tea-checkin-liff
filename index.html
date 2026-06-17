@@ -617,7 +617,7 @@
         </p>
         <!--
           役割:
-          サーバー状態取得の結果、今日のチェックインが eligible_72h かつ未使用の場合だけ表示します。
+          サーバー状態取得の結果、今日のチェックインが benefit_eligible かつ未使用の場合だけ表示します。
 
           設計思想:
           スタッフは画面を目視確認します。
@@ -795,12 +795,22 @@
     const COUPON_BENEFIT_LABEL = 'チェックイン特典';
     const COUPON_BENEFIT_TEXT = '次回ご来店時、対象ドリンク80円引き';
     /*
-      STATUS_ELIGIBLE_72H は歴史的な状態名です。
-      実際の特典対象期間は、Code.gs側の settings.benefit_valid_days に従います。
-      フロント側では日数判定をせず、サーバーから返る状態名を表示制御に使うだけです。
+      役割:
+      benefit_status の表示制御用定数です。
+
+      設計思想:
+      旧 eligible_72h は歴史的名称です。
+      現在は72時間固定ではなく、Code.gs/settingsシートの benefit_valid_days に従います。
+      フロントは日数判定をせず、サーバーが返した状態を表示制御へ翻訳するだけです。
+
+      互換性:
+      既存スプレッドシートには eligible_72h が残る可能性があるため、
+      読み取り時だけ benefit_eligible として扱います。
+      新規保存の正本はCode.gs側であり、フロントは旧状態名を新規保存しません。
     */
-    const STATUS_ELIGIBLE_72H = 'eligible_72h';
+    const STATUS_BENEFIT_ELIGIBLE = 'benefit_eligible';
     const STATUS_BENEFIT_USED = 'benefit_used';
+    const LEGACY_STATUS_ELIGIBLE_72H = 'eligible_72h';
     /*
       役割:
       店舗コード入力欄の桁数と、画面側の入力チェック形式です。
@@ -938,6 +948,29 @@
     */
     function isDevMode() {
       return APP_MODE === 'dev';
+    }
+
+    /*
+      役割:
+      サーバー状態や過去データに含まれる benefit_status を、現在の表示制御用状態名へそろえます。
+
+      設計思想:
+      eligible_72h は旧仕様の歴史的名称です。
+      既存データを一括書き換えなくても、画面上は benefit_eligible として扱えるようにします。
+      フロントは日数判定をせず、状態名の互換吸収だけを行います。
+
+      危険ポイント:
+      新規保存の正本はCode.gsです。
+      ここで benefit_valid_days や期限日を計算し始めないでください。
+    */
+    function normalizeBenefitStatus(status) {
+      const value = String(status || '');
+
+      if (value === LEGACY_STATUS_ELIGIBLE_72H) {
+        return STATUS_BENEFIT_ELIGIBLE;
+      }
+
+      return value;
     }
 
     /*
@@ -1533,10 +1566,10 @@
       }
 
       const todayCheckin = state && state.today_checkin ? state.today_checkin : null;
-      const todayStatus = todayCheckin ? todayCheckin.benefit_status : '';
+      const todayStatus = todayCheckin ? normalizeBenefitStatus(todayCheckin.benefit_status) : '';
       const canUseBenefit = Boolean(
         todayCheckin &&
-        todayCheckin.benefit_status === STATUS_ELIGIBLE_72H &&
+        normalizeBenefitStatus(todayCheckin.benefit_status) === STATUS_BENEFIT_ELIGIBLE &&
         state.today_benefit_used === false
       );
 
@@ -1562,7 +1595,7 @@
           statusDevMessage: '本日はすでにチェックイン済みです。特典対象です。',
           isError: false,
           checkinNote: 'スタッフ確認後、下のボタンで80円引きを使用してください。',
-          checkinDevNote: '今日のチェックインが eligible_72h のため、特典使用ボタンを表示できます。',
+          checkinDevNote: '今日のチェックインが benefit_eligible のため、特典使用ボタンを表示できます。',
           showCheckinForm: false,
           enableCheckinButton: false,
           showBenefitButton: true,
@@ -1729,8 +1762,8 @@
         return;
       }
 
-      if (todayCheckin.benefit_status !== STATUS_ELIGIBLE_72H) {
-        appendLog('特典使用中止: eligible_72h ではありません。');
+      if (normalizeBenefitStatus(todayCheckin.benefit_status) !== STATUS_BENEFIT_ELIGIBLE) {
+        appendLog('特典使用中止: benefit_eligible ではありません。');
         return;
       }
 
