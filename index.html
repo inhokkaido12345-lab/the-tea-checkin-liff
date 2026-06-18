@@ -272,9 +272,33 @@
       line-height: 1.7;
     }
 
+    /*
+      役割:
+      レジ前でお客様が今操作する場所をまとめる主操作カードです。
+
+      設計思想:
+      店頭では説明より操作が先です。
+      スマホのファーストビュー付近で、2桁コード入力欄とチェックインボタンを見つけられることを優先します。
+      action-area は「今何をするか」、couponInfoCard は「履歴、期限、ルールの確認」という責務に分けます。
+
+      危険ポイント:
+      操作カード化しても、hidden制御やボタンのdisabled制御はJavaScript側の viewState を正本にします。
+      ここで表示だけ無理に変えると、チェックイン不可状態で入力欄が見える事故につながります。
+    */
     .action-area {
-      margin-top: 22px;
+      box-sizing: border-box;
+      width: 100%;
+      margin-top: 18px;
+      padding: 18px;
+      background: var(--card-color);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
       text-align: center;
+    }
+
+    .action-area button,
+    .action-area .store-code-input {
+      width: min(100%, 420px);
     }
 
     button {
@@ -494,49 +518,22 @@
 
       <!--
         役割:
-        再来店特典の状態を、お客様にも見える形で表示するカードです。
-
-        一般化:
-        ユーザーの履歴認識を補助する説明カードです。
-        サーバー記録と顧客記憶のズレを埋めます。
-
-        設計思想:
-        来店チェックイン特典の仕組みを隠さず、「いつ来た扱いなのか」「期限日はいつか」を明示します。
-        サーバー記録とお客様の記憶のズレを減らし、
-        システムだけが状態を知っている状態を避けるためです。
-
-        魔改造の入口:
-        期限日までの残り日数、スタンプカード風表示、キャンペーン別説明を追加できます。
-        現在は固定表示として、チェックイン特典の内容を先に見せます。
-        将来は Code.gs から benefit_type や benefit_value を返し、キャンペーン別に切り替えられます。
-        スタンプカード化する場合も、このカードに「履歴の見え方」を追加し、
-        状態の結論は statusMessage に残すと責務が崩れにくくなります。
-
-        危険ポイント:
-        index.html側では日付計算や特典対象判定をしません。
-        Code.gs が返す customer_guidance を表示するだけにします。
-        statusMessage と同じ短い結論文を繰り返すと読みにくくなるため、
-        ここは履歴とルール説明を中心にします。
-      -->
-      <section id="couponInfoCard" class="coupon-info-card" aria-live="polite">
-        <p class="coupon-info-label">再来店特典</p>
-        <div class="coupon-benefit-box">
-          <p id="couponBenefitLabel" class="coupon-benefit-label">チェックイン特典</p>
-          <p id="couponBenefitText" class="coupon-benefit-text">次回ご来店時、対象ドリンク80円引き</p>
-        </div>
-        <p id="lastVisitMessage" class="coupon-info-main">チェックイン履歴を確認中です。</p>
-        <p id="benefitRuleMessage" class="coupon-info-text"></p>
-        <p id="currentCouponMessage" class="coupon-info-text"></p>
-        <p id="nextVisitMessage" class="coupon-info-text"></p>
-      </section>
-
-      <!--
-        役割:
         今操作できるものだけを置く領域です。
 
         一般化:
         アプリの操作領域です。
         チェックイン可能なら checkinFormArea、特典使用可能なら useBenefitButton を出します。
+
+        設計思想:
+        店頭では説明より操作が先です。
+        レジ前ではスクロール量を減らし、まず「コードをどこに入れるか」が見える状態を優先します。
+        状態カードは「今どういう状態か」、action-area は「今何をするか」、
+        couponInfoCard は「履歴、期限、ルールの確認」を担当します。
+        操作導線を上に出しても、特典情報を隠すわけではありません。
+        お客様の認知負荷を下げるため、主操作をファーストビュー近くに置きます。
+        ただし、画面を勝手に動かす自動スクロールは行いません。
+        LINE内ブラウザでは自動スクロールや自動focusの挙動が不安定になりやすいため、
+        お客様が自然に画面を見て操作できる配置を優先します。
 
         魔改造の入口:
         後でこの領域をモーダル化したり、操作ボタンを状態別に並べ替えたりできます。
@@ -636,6 +633,45 @@
           スタッフが画面を確認した後に押してください。80円引きの使用済みとして記録されます。
         </p>
       </div>
+
+      <!--
+        役割:
+        再来店特典の状態を、お客様にも見える形で表示するカードです。
+
+        一般化:
+        ユーザーの履歴認識を補助する説明カードです。
+        サーバー記録と顧客記憶のズレを埋めます。
+
+        設計思想:
+        来店チェックイン特典の仕組みを隠さず、「いつ来た扱いなのか」「期限日はいつか」を明示します。
+        ただし店頭では説明より操作が先なので、主操作カードの下に置きます。
+        サーバー記録とお客様の記憶のズレを減らし、
+        システムだけが状態を知っている状態を避けるためです。
+
+        魔改造の入口:
+        期限日までの残り日数、スタンプカード風表示、キャンペーン別説明を追加できます。
+        現在は固定表示として、チェックイン特典の内容を先に見せます。
+        将来は Code.gs から benefit_type や benefit_value を返し、キャンペーン別に切り替えられます。
+        スタンプカード化する場合も、このカードに「履歴の見え方」を追加し、
+        状態の結論は statusMessage に残すと責務が崩れにくくなります。
+
+        危険ポイント:
+        index.html側では日付計算や特典対象判定をしません。
+        Code.gs が返す customer_guidance を表示するだけにします。
+        statusMessage と同じ短い結論文を繰り返すと読みにくくなるため、
+        ここは履歴とルール説明を中心にします。
+      -->
+      <section id="couponInfoCard" class="coupon-info-card" aria-live="polite">
+        <p class="coupon-info-label">再来店特典</p>
+        <div class="coupon-benefit-box">
+          <p id="couponBenefitLabel" class="coupon-benefit-label">チェックイン特典</p>
+          <p id="couponBenefitText" class="coupon-benefit-text">次回ご来店時、対象ドリンク80円引き</p>
+        </div>
+        <p id="lastVisitMessage" class="coupon-info-main">チェックイン履歴を確認中です。</p>
+        <p id="benefitRuleMessage" class="coupon-info-text"></p>
+        <p id="currentCouponMessage" class="coupon-info-text"></p>
+        <p id="nextVisitMessage" class="coupon-info-text"></p>
+      </section>
 
       <!--
         役割:
