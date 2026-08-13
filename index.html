@@ -72,7 +72,7 @@
   フロント側バリデーションは入力しやすさのためであり、セキュリティの正本ではありません。
 
   未来の魔改造例:
-  80円引きを別特典にする、多言語対応、スタンプカード風UI、QR/NFCチェックイン、
+  100円引きを別特典にする、多言語対応、スタンプカード風UI、QR/NFCチェックイン、
   benefit_type / benefit_value / campaign_id / store_id の追加、
   JSONPから通常APIへの移行、スプレッドシートからDBへの移行が考えられます。
 -->
@@ -606,7 +606,7 @@
           状態の結論は statusMessage、履歴と期限は couponInfoCard に分けます。
 
           危険ポイント:
-          「この80円引きは使用済みです。」のような状態文言をここに繰り返すと、
+          「この100円引きは使用済みです。」のような状態文言をここに繰り返すと、
           お客様が同じ情報を複数回読むことになります。
         -->
         <p id="checkinNote" class="note">
@@ -627,10 +627,10 @@
           benefit_used payload の基本構造は変えず、checkin_id で対象チェックインと紐づけます。
         -->
         <button id="useBenefitButton" type="button" hidden disabled>
-          80円引きを使用する
+          100円引きを使用する
         </button>
         <p id="benefitNote" class="note" hidden>
-          スタッフが画面を確認した後に押してください。80円引きの使用済みとして記録されます。
+          スタッフが画面を確認した後に押してください。100円引きの使用済みとして記録されます。
         </p>
       </div>
 
@@ -665,7 +665,7 @@
         <p class="coupon-info-label">再来店特典</p>
         <div class="coupon-benefit-box">
           <p id="couponBenefitLabel" class="coupon-benefit-label">チェックイン特典</p>
-          <p id="couponBenefitText" class="coupon-benefit-text">次回ご来店時、対象ドリンク80円引き</p>
+          <p id="couponBenefitText" class="coupon-benefit-text">次回ご来店時、対象ドリンク100円引き</p>
         </div>
         <p id="lastVisitMessage" class="coupon-info-main">チェックイン履歴を確認中です。</p>
         <p id="benefitRuleMessage" class="coupon-info-text"></p>
@@ -822,14 +822,14 @@
       魔改造の入口:
       特典内容を変える場合は、COUPON_BENEFIT_TEXT と店頭POP、スタッフ説明を合わせます。
       将来は Code.gs から benefit_type や benefit_value を返して、キャンペーン別表示にできます。
-      例: 80円引き、トッピング無料、2杯目割引などに差し替えられます。
+      例: 100円引き、トッピング無料、2杯目割引などに差し替えられます。
 
       危険ポイント:
       ここに店舗コードの正解や、特典有効日数の判定ロジックを入れないでください。
       便益表示はフロント、対象判定はサーバーという分担を崩さないようにします。
     */
     const COUPON_BENEFIT_LABEL = 'チェックイン特典';
-    const COUPON_BENEFIT_TEXT = '次回ご来店時、対象ドリンク80円引き';
+    const COUPON_BENEFIT_TEXT = '次回ご来店時、対象ドリンク100円引き';
     /*
       役割:
       benefit_status の表示制御用定数です。
@@ -917,12 +917,12 @@
     const CUSTOMER_MESSAGES = {
       loading: '読み込み中です',
       checkinAvailable: '本日のご来店分として、次回特典をお付けできます。',
-      firstCheckinComplete: 'チェックインが完了しました。次回ご来店時、期限日まで80円引き対象です。',
-      benefitEligible: '本日は80円引き対象です。スタッフにこの画面をお見せください。',
+      firstCheckinComplete: 'チェックインが完了しました。次回ご来店時、期限日まで100円引き対象です。',
+      benefitEligible: '本日は100円引き対象です。スタッフにこの画面をお見せください。',
       alreadyCheckedIn: '本日のチェックインは完了しています。',
-      benefitUsed: 'この80円引きは使用済みです。',
+      benefitUsed: 'この100円引きは使用済みです。',
       communicationError: '通信に失敗しました。時間をおいてもう一度お試しください。',
-      benefitNotice: 'スタッフが画面を確認した後に押してください。80円引きの使用済みとして記録されます。',
+      benefitNotice: 'スタッフが画面を確認した後に押してください。100円引きの使用済みとして記録されます。',
       storeCodeRequired: '店頭の2桁コードを入力してください。',
       storeCodeInvalid: '店舗コードが正しくありません。スタッフへご確認ください。'
     };
@@ -1630,7 +1630,7 @@
           statusMessage: CUSTOMER_MESSAGES.benefitEligible,
           statusDevMessage: '本日はすでにチェックイン済みです。特典対象です。',
           isError: false,
-          checkinNote: 'スタッフ確認後、下のボタンで80円引きを使用してください。',
+          checkinNote: 'スタッフ確認後、下のボタンで100円引きを使用してください。',
           checkinDevNote: '今日のチェックインが benefit_eligible のため、特典使用ボタンを表示できます。',
           showCheckinForm: false,
           enableCheckinButton: false,
@@ -1644,7 +1644,7 @@
       if (state.today_benefit_used === true) {
         return {
           statusMessage: CUSTOMER_MESSAGES.benefitUsed,
-          statusDevMessage: 'この80円引きは使用済みです。',
+          statusDevMessage: 'この100円引きは使用済みです。',
           isError: false,
           checkinNote: '',
           checkinDevNote: '',
@@ -1806,14 +1806,14 @@
       if (currentCustomerState.today_benefit_used === true) {
         setModeStatus(
           CUSTOMER_MESSAGES.benefitUsed,
-          'この80円引きはすでに使用済みです',
+          'この100円引きはすでに使用済みです',
           true
         );
         await loadCustomerStateFromApi();
         return;
       }
 
-      const confirmed = window.confirm('スタッフ確認はお済みですか？80円引きを使用済みにします。一度使用すると元に戻せません。');
+      const confirmed = window.confirm('スタッフ確認はお済みですか？100円引きを使用済みにします。一度使用すると元に戻せません。');
 
       if (!confirmed) {
         appendLog('特典使用キャンセル');
@@ -1842,7 +1842,7 @@
         if (response.ok === true) {
           setModeStatus(
             CUSTOMER_MESSAGES.benefitUsed,
-            'この80円引きは使用済みです'
+            'この100円引きは使用済みです'
           );
           useBenefitButton.hidden = true;
           benefitNote.hidden = true;
@@ -1854,7 +1854,7 @@
         if (response.code === 'BENEFIT_ALREADY_USED') {
           setModeStatus(
             CUSTOMER_MESSAGES.benefitUsed,
-            'この80円引きはすでに使用済みです',
+            'この100円引きはすでに使用済みです',
             true
           );
           useBenefitButton.hidden = true;
